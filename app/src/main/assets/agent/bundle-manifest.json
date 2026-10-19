@@ -1,0 +1,29 @@
+{
+  "piVersion": "1.3.0",
+  "upstreamCommit": "482c1381a00d8d00bc81697e4a980c593db6803e",
+  "bundleSha256": "7060553cefd0272d110f48fe81a9c4b435b11c4791abdcaa7bb1971ec6624cd2",
+  "sourceFiles": {
+    "build.mjs": "58dfb197b5b2de2ff3ba876d164ef153cf27d7bb1a3281f1799807d3fb92f5ac",
+    "package-lock.json": "4d302cfdda617a6860b641b7c5888ff7f4adee1f15273d1a9710adc88d90d8b4",
+    "package.json": "6236e5031399be22e96d27e7041770a4395fa992a5b0150f582e84b14faa5fc9",
+    "src/runtime.ts": "f71f24a8eda23f1522f1976ee0cb12f90e7a2d3dd163dddb343634c7bb1cca51",
+    "src/skill-fs.ts": "e6d4f79ca315c74315fba8451321984b3eceaa5a7dcdbe501f14d121e538b46c",
+    "vendor/pi/LICENSE": "0457f5bcec3b3b211605dfb5d1a49042fd638f3686a410fe099c24a25af13c48",
+    "vendor/pi/README.md": "3a0ec25fbf398812f41bef3c4bfa0dde018943d87cb9e51174cebd142ea85718",
+    "vendor/pi/config.ts": "f3a2cecd9a75474ffeabdd0b59ec1b3308329553cec6ac8a7f74dbd41d96ca4c",
+    "vendor/pi/core/skills.ts": "8dcc644dbabbb34238f609ecf191c0da370d74873ccaccaf3c3cd0e7703d9431",
+    "vendor/pi/core/source-info.ts": "52648af6e9bb29858ece4eaeccedd960c5de8a0ac4ec25c0ee851ff00de27f5c",
+    "vendor/pi/utils/frontmatter.ts": "99142d78b94e658e0be65cf05046be8069b3700168a683e0af64219ad903bcd6",
+    "vendor/pi/utils/paths.ts": "79fd8e55f25c1eff25a528be22cd7c1c960ef483dc7506c0bb1db6ee81001225",
+    "vendor/pi/utils/text.ts": "bb323f9607c499115b532021f4f0163c6df04d834aee9c32c3c77b273bd2d7c6"
+  },
+  "packages": [
+    "@earendil-works/pi-agent-core",
+    "@earendil-works/pi-ai",
+    "ignore",
+    "path-browserify",
+    "typebox",
+    "yaml"
+  ],
+  "bytes": 319867
+}

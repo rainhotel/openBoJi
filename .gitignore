@@ -1,0 +1,11 @@
+.gradle/
+.kotlin/
+.tools/
+**/build/
+local.properties
+*.jks
+*.keystore
+captures/
+**/node_modules/
+agent-runtime/bundle-meta.json
+artifacts/screenshots/*.xml

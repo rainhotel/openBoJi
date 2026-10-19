@@ -1,0 +1,10 @@
+* text=auto
+gradlew text eol=lf
+*.bat text eol=crlf
+
+# The Agent manifest hashes exact source/bundle bytes; preserve them across OSes.
+agent-runtime/** -text
+app/src/main/assets/agent/** -text
+*.png -text
+*.apk -text
+*.jar -text

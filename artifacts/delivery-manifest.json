@@ -1,0 +1,27 @@
+{
+  "generatedAt": "2026-10-19T00:22:29.334174+08:00",
+  "apk": "boji-debug.apk",
+  "apkBytes": 10909099,
+  "apkSha256": "ad857db9b4249689d9917a9feccca53abd01aae42dae619ed4806cc8cd73f22b",
+  "piVersion": "1.3.0",
+  "agentBundleBytes": 319867,
+  "agentBundleSha256": "7060553cefd0272d110f48fe81a9c4b435b11c4791abdcaa7bb1971ec6624cd2",
+  "checks": {
+    "js": {
+      "passed": 7,
+      "failed": 0
+    },
+    "jvm": {
+      "passed": 16,
+      "failed": 0
+    },
+    "android36Emulator": {
+      "passed": 17,
+      "failed": 0
+    },
+    "lintErrors": 0,
+    "lintWarnings": 4
+  },
+  "cloudProviderLiveTest": false,
+  "userPhysicalDeviceTest": false
+}
