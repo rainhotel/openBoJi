@@ -74,6 +74,8 @@ internal object DataValidation {
 
     fun view(value: SavedView) {
         text(value.name, "视图名称", 40, true)
+        text(value.query,"搜索条件",200)
+        require(value.viewMode in setOf("calendar","table")) { "视图模式无效" }
         require(value.scope in setOf("records","tasks")) { "视图类型无效" }
         require(value.sorts.size in 1..5 && value.sorts.distinct().size == value.sorts.size &&
             value.sorts.all { it.removePrefix("-") in setOf("deadline","priority","domain","status","date") }) { "排序条件无效" }

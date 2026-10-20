@@ -42,7 +42,8 @@ import java.io.File
 
 @Composable
 internal fun RecordEditor(initial: LifeRecord, goals: List<WeeklyGoal>, plans: List<Plan>,
-    onSave: (LifeRecord) -> Unit, onCancel: () -> Unit, onDelete: (() -> Unit)? = null) {
+    onSave: (LifeRecord) -> Unit, onCancel: () -> Unit, onDelete: (() -> Unit)? = null,
+    saving:Boolean=false,saveError:String?=null) {
     var domain by rememberSaveable(initial.id) { mutableStateOf(initial.domain) }
     var title by rememberSaveable(initial.id) { mutableStateOf(initial.title) }
     var date by rememberSaveable(initial.id) { mutableStateOf(initial.date) }
@@ -86,8 +87,8 @@ internal fun RecordEditor(initial: LifeRecord, goals: List<WeeklyGoal>, plans: L
         recordPhotoNames(initial).forEach { RecordPhoto(it,220.dp) }
         if (extra) FormField("备注", note, { note = it }, singleLine = false)
         else TextButton(onClick = { extra = true }, contentPadding = PaddingValues(0.dp)) { Text("添加备注", fontSize = 13.sp) }
-        FormError(error)
-        Button(onClick = {
+        FormError(error ?: saveError)
+        Button(enabled=!saving,onClick = {
             val parsedMinutes = if (minutes.isBlank()) 0 else minutes.toIntOrNull()
             val parsedAmount = if (domain == Domain.FINANCE) runCatching { Amounts.parseFen(amount.trim()) }.getOrNull() else 0L
             error = when {
@@ -104,14 +105,15 @@ internal fun RecordEditor(initial: LifeRecord, goals: List<WeeklyGoal>, plans: L
                 goalId = goalId.takeIf { id -> goals.any { it.id == id && it.domain == domain && !it.archived } && domain != Domain.FINANCE },
                 planId = selectedPlan.takeIf { id -> choices.any { it.id==id } },count=if(domain==Domain.FINANCE)0 else count.toIntOrNull() ?: 0,
                 countUnit=unit,completesPlan=completes))
-        }, Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(18.dp)) { Text("保存") }
+        }, modifier=Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(18.dp)) { Text(if(saving)"保存中…" else "保存") }
         onDelete?.let { TextButton(onClick = it, modifier = Modifier.fillMaxWidth()) { Text("删除记录", color = MaterialTheme.colorScheme.error) } }
     }
 }
 
 @Composable
 internal fun PlanEditor(initial: Plan, goals: List<WeeklyGoal>, records: List<LifeRecord> = emptyList(),onEditRecord: (LifeRecord)->Unit = {},onSave: (Plan, Set<Int>) -> Unit,
-    onCancel: () -> Unit, onSkip: (() -> Unit)? = null, onDelete: (() -> Unit)? = null) {
+    onCancel: () -> Unit, onSkip: (() -> Unit)? = null, onDelete: (() -> Unit)? = null,
+    saving: Boolean = false, saveError: String? = null) {
     var title by rememberSaveable(initial.id) { mutableStateOf(initial.title) }
     var domain by rememberSaveable(initial.id) { mutableStateOf(initial.domain) }
     var date by rememberSaveable(initial.id) { mutableStateOf(initial.date) }
@@ -126,36 +128,45 @@ internal fun PlanEditor(initial: Plan, goals: List<WeeklyGoal>, records: List<Li
     var project by rememberSaveable(initial.id) { mutableStateOf(initial.project) }
     var reminder by rememberSaveable(initial.id) { mutableStateOf(initial.reminderMinutes?.toString().orEmpty()) }
     var error by rememberSaveable(initial.id) { mutableStateOf<String?>(null) }
+    var more by rememberSaveable(initial.id) { mutableStateOf(false) }
     EditorFrame(if (onDelete == null) "加计划" else "编辑计划", onCancel) {
-        ChoiceRow(Domain.entries.map { it.label }, Domain.entries.indexOf(domain)) { domain = Domain.entries[it]; goalId = null }
         FormField("要做什么", title, { title = it; error = null }, placeholder = "例如：练拳")
         DateField(date, { date = it; error = null })
         FormField("时间", time, { time = it; error = null }, placeholder = "HH:mm，可留空", keyboard = KeyboardType.Text)
-        FormField("截止时间",deadline,{deadline=it;error=null},placeholder="YYYY-MM-DD 或 YYYY-MM-DDTHH:mm，可留空")
-        Text("优先级",color=Muted,fontSize=12.sp);ChoiceRow(listOf("P0","P1","P2","P3"),priority){priority=it}
-        FormField("项目",project,{project=it},placeholder="例如：期末英语，可留空")
-        Text("状态",color=Muted,fontSize=12.sp)
-        val states=listOf(PlanStatus.TODO,PlanStatus.IN_PROGRESS,PlanStatus.DONE,PlanStatus.SKIPPED,PlanStatus.ARCHIVED)
-        ChoiceRow(states.map { it.label },states.indexOf(status)){status=states[it]}
-        FormField("提前提醒（分钟）",reminder,{reminder=it;error=null},placeholder="留空不提醒，0 表示准时",keyboard=KeyboardType.Number)
-        if (domain != Domain.FINANCE) FormField("预计时长（分钟）", minutes, { minutes = it; error = null }, keyboard = KeyboardType.Number)
-        if (domain != Domain.FINANCE) GoalSelector(goals.filter { !it.archived && it.domain == domain }, goalId) { goalId = it }
-        if (onDelete == null) {
-            ToggleRow("每周重复", showRepeat) { showRepeat = it; if (!it) repeats = emptySet() }
-            if (showRepeat) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
-                    listOf("一", "二", "三", "四", "五", "六", "日").forEachIndexed { index, label ->
-                        FilterChip(selected = index + 1 in repeats, onClick = { repeats = if (index + 1 in repeats) repeats - (index + 1) else repeats + (index + 1) },
-                            modifier = Modifier.weight(1f), label = { Text(label, fontSize = 12.sp) })
+        TextButton(onClick={more=!more}) { Text(if(more)"收起更多选项" else "更多选项") }
+        if(more) {
+            ChoiceRow(Domain.entries.map { it.label }, Domain.entries.indexOf(domain)) { index ->
+                val selected=Domain.entries[index]
+                if(records.any { it.planId==initial.id && it.domain!=selected }) error="已有关联记录，不能修改任务类型"
+                else if(selected!=domain) { domain=selected;goalId=null;error=null }
+            }
+            DateField(deadline,{deadline=it;error=null},label="截止时间")
+            Text("优先级",color=Muted,fontSize=12.sp);ChoiceRow(listOf("P0","P1","P2","P3"),priority){priority=it}
+            FormField("项目",project,{project=it},placeholder="例如：期末英语，可留空")
+            Text("状态",color=Muted,fontSize=12.sp)
+            val states=listOf(PlanStatus.TODO,PlanStatus.IN_PROGRESS,PlanStatus.DONE,PlanStatus.SKIPPED,PlanStatus.ARCHIVED)
+            ChoiceRow(states.map { it.label },states.indexOf(status)){status=states[it]}
+            FormField("提前提醒（分钟）",reminder,{reminder=it;error=null},placeholder="留空不提醒，0 表示准时",keyboard=KeyboardType.Number)
+            if (domain != Domain.FINANCE) FormField("预计时长（分钟）", minutes, { minutes = it; error = null }, keyboard = KeyboardType.Number)
+            if (domain != Domain.FINANCE) GoalSelector(goals.filter { !it.archived && it.domain == domain }, goalId) { goalId = it }
+            if (onDelete == null) {
+                ToggleRow("每周重复", showRepeat) { showRepeat = it; if (!it) repeats = emptySet() }
+                if (showRepeat) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(3.dp)) {
+                        listOf("一", "二", "三", "四", "五", "六", "日").forEachIndexed { index, label ->
+                            FilterChip(selected = index + 1 in repeats, onClick = { repeats = if (index + 1 in repeats) repeats - (index + 1) else repeats + (index + 1) },
+                                modifier = Modifier.weight(1f), label = { Text(label, fontSize = 12.sp) })
+                        }
                     }
                 }
-            }
-        } else if (initial.seriesId != null) Text("只修改本次安排", color = Muted, fontSize = 12.sp)
-        FormError(error)
-        Button(onClick = {
+            } else if (initial.seriesId != null) Text("只修改本次安排", color = Muted, fontSize = 12.sp)
+        }
+        FormError(error ?: saveError)
+        Button(enabled=!saving,onClick = {
             val count = if(minutes.isBlank())0 else minutes.toIntOrNull()
             error = when {
                 title.isBlank() -> "写一下计划内容"
+                records.any { it.planId==initial.id && it.domain!=domain } -> "已有关联记录，不能修改任务类型"
                 runCatching { LocalDate.parse(date) }.isFailure -> "日期格式为 YYYY-MM-DD"
                 time.isNotBlank() && (!time.matches(Regex("[0-2][0-9]:[0-5][0-9]")) || runCatching { LocalTime.parse(time) }.isFailure) -> "时间格式为 HH:mm"
                 domain != Domain.FINANCE && (count == null || count < 0 || count > 1440) -> "预计时长需在 0–1440 分钟内"
@@ -170,7 +181,7 @@ internal fun PlanEditor(initial: Plan, goals: List<WeeklyGoal>, records: List<Li
                 expectedMinutes = if (domain == Domain.FINANCE) 0 else count ?: 25,
                 goalId = goalId.takeIf { id -> goals.any { it.id == id && it.domain == domain && !it.archived } && domain != Domain.FINANCE },
                 deadline=deadline.trim(),priority=priority,status=status,project=project.trim(),reminderMinutes=reminder.toIntOrNull()), repeats)
-        }, Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(18.dp)) { Text("保存计划") }
+        }, modifier=Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(18.dp)) { Text(if(saving)"保存中…" else "保存计划") }
         if (onSkip != null || onDelete != null) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
             onSkip?.let { TextButton(onClick = it) { Text("跳过本次") } }
             onDelete?.let { TextButton(onClick = it) { Text("删除本次", color = MaterialTheme.colorScheme.error) } }
@@ -293,15 +304,15 @@ internal fun EditorFrame(title: String, onCancel: () -> Unit, content: @Composab
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
-@Composable internal fun DateField(value: String, onChange: (String) -> Unit) {
+@Composable internal fun DateField(value: String, onChange: (String) -> Unit, label: String = "日期") {
     var open by remember { mutableStateOf(false) }
-    OutlinedTextField(value, onChange, Modifier.fillMaxWidth(), label = { Text("日期") }, singleLine = true,
+    OutlinedTextField(value, onChange, Modifier.fillMaxWidth(), label = { Text(label) }, singleLine = true,
         shape = RoundedCornerShape(15.dp), trailingIcon = { IconButton(onClick = { open = true }) { Glyph("calendar", description = "选择日期") } })
     if (open) {
-        val day = runCatching { LocalDate.parse(value) }.getOrDefault(LocalDate.now())
+        val day = runCatching { LocalDate.parse(value.substringBefore('T')) }.getOrDefault(LocalDate.now())
         val picker = rememberDatePickerState(initialSelectedDateMillis = day.atStartOfDay().toInstant(ZoneOffset.UTC).toEpochMilli())
         DatePickerDialog(onDismissRequest = { open = false }, confirmButton = { TextButton(onClick = {
-            picker.selectedDateMillis?.let { onChange(Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toString()) }; open = false
+            picker.selectedDateMillis?.let { onChange(Instant.ofEpochMilli(it).atZone(ZoneOffset.UTC).toLocalDate().toString() + if(value.contains('T'))"T"+value.substringAfter('T') else "") }; open = false
         }) { Text("确定") } }, dismissButton = { TextButton(onClick = { open = false }) { Text("取消") } }) { DatePicker(picker) }
     }
 }

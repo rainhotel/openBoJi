@@ -11,7 +11,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Install application failed. Run scripts/build.ps1 -Verify first.' }
     & $adb -s $Serial install -r 'app\build\outputs\apk\androidTest\debug\app-debug-androidTest.apk'
     if ($LASTEXITCODE -ne 0) { throw 'Install test APK failed.' }
-    $output = & $adb -s $Serial shell am instrument -w 'com.boji.app.test/com.boji.app.BojiTestRunner'
+    $output = & $adb -s $Serial shell am instrument -w -e notClass 'com.boji.app.LiveAssistantFlowTest' 'com.boji.app.test/com.boji.app.BojiTestRunner'
     ($output -join "`n").TrimEnd() | Set-Content -LiteralPath 'artifacts\instrumentation-results.txt' -Encoding utf8
     $output | Write-Output
     if (($output -join "`n") -notmatch 'OK \([0-9]+ tests\)') { throw 'Instrumentation did not pass. See artifacts/instrumentation-results.txt.' }

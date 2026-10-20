@@ -106,3 +106,28 @@ test('DeepSeek thinking is retained across consecutive tool calls',async()=>{
   assert.equal(typeof replay.messages.find(m=>m.role==='assistant').content,'string');
   assert.equal(replay.thinking.type,'enabled');
 });
+
+test('direct task tools accept minimal dates and only authorized tools are advertised',async()=>{
+  let turn=0,exposed=[],saved=[];
+  const result=await runtime().run({...input,allowedTools:['create_tasks','propose_draft']},async(method,args)=>{
+    if(method==='model') {
+      exposed=Array.from(args.tools,t=>t.function.name);
+      return ++turn===1 ? toolResponse('create_tasks',{tasks:[{domain:'TRAINING',title:'练胸',date:'2026-10-21'}]}) : answer('已创建');
+    }
+    if(method==='create_tasks')saved=args.tasks;
+    return {saved:true,tasks:[{id:'real-id'}]};
+  });
+  assert.equal(result.success,true);assert.deepEqual(exposed,['create_tasks','propose_draft']);assert.equal(saved[0].title,'练胸');
+});
+
+test('a denied update tool cannot reach the native host and invalid updates are rejected',async()=>{
+  for(const allowedTools of [['create_tasks'],['update_tasks']]) {
+    let turn=0,writes=0;
+    const result=await runtime().run({...input,allowedTools},async(method)=>{
+      if(method==='model')return ++turn===1 ? toolResponse('update_tasks',{changes:[{id:'real-id',priority:8}]}) : answer('未修改');
+      if(method==='update_tasks')writes++;
+      return {};
+    });
+    assert.equal(result.success,true);assert.equal(writes,0);assert.equal(result.trace.at(-1).error,true);
+  }
+});

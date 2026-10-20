@@ -74,10 +74,27 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
             installedSkills=agentWorkspace.installed(),
             memories=snapshot.memories,settingsDraft=store.settingsDraft(),notificationsAllowed=TaskReminders.allowed(getApplication()),
             preciseReminders=TaskReminders.precise(getApplication()),
+            taskReceipt=snapshot.taskReceipt,
         ) }
     }
 
-    override fun saveRecord(record: LifeRecord) = mutate { store.saveRecord(record) }
+    override fun saveRecord(record: LifeRecord) = saveItem(record.id) {store.saveRecord(record)}
+
+    private fun saveItem(id:String,block:()->Unit) {
+        if(state.value.saving)return
+        mutableState.update {it.copy(saving=true,savedItemId=null,saveError=null,error=null)}
+        viewModelScope.launch {
+            try {
+                mutex.withLock {
+                    val snapshot=withContext(Dispatchers.IO) {block();store.snapshot().also {TaskReminders.rebuild(getApplication(),it.plans)}}
+                    updateSnapshot(snapshot,null)
+                }
+                mutableState.update {it.copy(savedItemId=id)}
+            } catch(cancelled:CancellationException) {throw cancelled}
+            catch(error:Exception) {mutableState.update {it.copy(saveError=error.message ?: "保存失败，请重试",error=error.message ?: "保存失败，请重试")}}
+            finally {mutableState.update {it.copy(saving=false)}}
+        }
+    }
     override fun deleteRecord(id: String) = mutate("已删除") { store.deleteRecord(id) }
     override fun saveGoal(goal: WeeklyGoal) = mutate { store.saveGoal(goal) }
     override fun archiveGoal(id: String) = mutate("已归档") { store.archiveGoal(id) }
@@ -140,7 +157,7 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
         store.deletePlan(id)
     }
 
-    override fun savePlan(plan: Plan, repeatDays: Set<Int>) = mutate {
+    override fun savePlan(plan: Plan, repeatDays: Set<Int>) = saveItem(plan.id) {
         if (repeatDays.isEmpty() || plan.seriesId != null) store.savePlan(plan)
         else {
             require(repeatDays.all { it in 1..7 }) { "请选择有效星期" }
@@ -184,8 +201,7 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
 
     override fun sendMessage(text: String) {
         val current = state.value
-        if (current.assistantBusy) return
-        if (current.draft != null) { showError("先保存或放下当前草稿"); return }
+        if (current.assistantBusy || current.saving) return
         if(current.settings.enabled && !DeepSeekConnection.isOfficial(current.settings.connections.getOrNull(current.settings.activeIndex)?.endpoint.orEmpty())) {
             showError("当前版本请在设置连接 DeepSeek 官方平台");return
         }
@@ -212,14 +228,22 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
                 val reply = if (state.value.settings.enabled) agent().respond(input,state.value,if(canInspect)imageBytes else null)
                     else AssistantClient().respond(input,state.value,null)
                 ensureActive()
+                val latest=withContext(Dispatchers.IO) {store.snapshot()}
                 val batch = reply.draft?.let { draft ->
-                    DraftLinker.link(draft,state.value,input,imagePath?.let { File(it).name })
+                    val linked=DraftLinker.link(draft,state.value.copy(plans=latest.plans),input,imagePath?.let { File(it).name })
+                    linked.copy(records=linked.records.map { record ->
+                        val previous=current.draft?.records?.singleOrNull {it.title==record.title && it.domain==record.domain}
+                            ?: current.draft?.records?.singleOrNull()?.takeIf {linked.records.size==1 && it.domain==record.domain}
+                        if(record.attachments.isEmpty() && previous!=null)record.copy(attachments=previous.attachments,sourceId=previous.sourceId) else record
+                    })
                 }
                 mutex.withLock {
                     val snapshot = withContext(Dispatchers.IO) {
-                        store.saveMessage(ChatMessage(user=false,text=reply.text + if(imagePath!=null && !canInspect) "\n照片作为本地附件保留，未交给模型识图。" else ""))
-                        store.savePendingDraft(batch)
-                        store.snapshot()
+                        val answer=ChatMessage(user=false,text=reply.text + if(imagePath!=null && !canInspect) "\n照片作为本地附件保留，未交给模型识图。" else "")
+                        store.saveMessage(answer)
+                        if(latest.taskReceipt!=null && latest.taskReceipt.id!=current.taskReceipt?.id)store.attachTaskReceipt(answer.id)
+                        if(batch!=null)store.savePendingDraft(batch)
+                        store.snapshot().also {TaskReminders.rebuild(getApplication(),it.plans)}
                     }
                     updateSnapshot(snapshot,null)
                 }
@@ -228,7 +252,25 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
                 mutableState.update { it.copy(notice="已停止，输入保留在对话中") }
             } catch (error: Exception) {
                 showError(error.message ?: "处理失败，可以重试")
-            } finally { mutableState.update { it.copy(assistantBusy=false,assistantStatus="") } }
+            } finally {
+                // A task tool may already have committed before cancellation or a later provider failure.
+                withContext(NonCancellable) { mutex.withLock {
+                    try {
+                        val snapshot=withContext(Dispatchers.IO) {
+                            val receipt=store.snapshot().taskReceipt
+                            if(receipt!=null && receipt.id!=current.taskReceipt?.id && receipt.messageId==null) {
+                                val saved=ChatMessage(user=false,text="任务操作已保存，可以查看日程或撤销。")
+                                store.saveMessage(saved);store.attachTaskReceipt(saved.id)
+                            }
+                            store.snapshot().also {TaskReminders.rebuild(getApplication(),it.plans)}
+                        }
+                        val error=state.value.error;val notice=state.value.notice
+                        updateSnapshot(snapshot,notice)
+                        mutableState.update {it.copy(error=error)}
+                    } catch(_:Exception) {mutableState.update {it.copy(error="同步日程未完成，请重新进入查看已保存的任务")}}
+                    finally {mutableState.update {it.copy(assistantBusy=false,assistantStatus="")}}
+                } }
+            }
         }
     }
 
@@ -257,12 +299,22 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
     }
 
     override fun onCleared() { assistantJob?.cancel(); pi?.close(); store.close(); super.onCleared() }
-    override fun confirmDraft(batch: DraftBatch) = mutate("已保存") {
-        store.applyDraft(batch)
+    override fun confirmDraft(batch: DraftBatch) = saveItem(batch.id) {
+        val summary=listOfNotNull(
+            batch.records.takeIf {it.isNotEmpty()}?.joinToString("；") {record ->
+                val value=if(record.domain==Domain.FINANCE)"${Amounts.yuan(record.amountFen)}元" else
+                    listOfNotNull(if(record.count>0)"${record.count}${record.countUnit}" else null,if(record.minutes>0)"${record.minutes}分钟" else null).joinToString("，")
+                "已记录 ${record.title}${if(value.isNotEmpty())"，$value" else ""}"
+            },
+            batch.plans.takeIf {it.isNotEmpty()}?.let {"已创建 ${it.size} 个任务"},
+            batch.memories.takeIf {it.isNotEmpty()}?.let {"已记住 ${it.size} 条偏好"}
+        ).joinToString("。 ")
+        store.applyDraftWithMessage(batch,ChatMessage(id="saved:${UUID.nameUUIDFromBytes(batch.id.toByteArray())}",user=false,text=summary.take(4000)))
         if(batch.memories.isNotEmpty()) agentWorkspace.clearSession()
     }
     override fun saveDraft(batch: DraftBatch) = mutate(null) { store.savePendingDraft(batch) }
     override fun dismissDraft() = mutate("已放下，原文保留") { store.savePendingDraft(null) }
+    override fun undoAgentTasks() {cancelAssistant();mutate("已撤销上次任务操作") {store.undoAgentTasks();agentWorkspace.clearSession()} }
     override fun removeImage() { mutableState.update { it.copy(pendingImage=null) } }
     override fun consumeVoice() { mutableState.update { it.copy(voiceText=null) } }
     fun receiveVoice(text: String) { mutableState.update { it.copy(voiceText=text) } }

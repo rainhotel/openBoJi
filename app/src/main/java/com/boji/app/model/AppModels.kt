@@ -92,7 +92,11 @@ data class MemoryEntry(val id: String = UUID.randomUUID().toString(), val text: 
     val source: String = "用户确认", val updatedAt: String = LocalDateTime.now().toString())
 data class SavedView(val name: String, val domain: Domain? = null, val thisWeek: Boolean = false,
     val sorts: List<String> = listOf("deadline", "priority"), val groupBy: String = "",
-    val status: String = "", val columns: List<String> = listOf("date","deadline","priority","domain","status"),val scope: String="records")
+    val status: String = "", val columns: List<String> = listOf("date","deadline","priority","domain","status"),val scope: String="records",
+    val query: String = "", val viewMode: String = "calendar")
+
+/** Durable receipt for the last reversible task operation; never fabricates activity records. */
+data class TaskReceipt(val id: String, val createdIds: List<String>, val before: List<Plan>, val after: List<Plan>,val messageId:String?=null)
 data class AppState(
     val loading: Boolean = true,
     val today: String = LocalDate.now().toString(),
@@ -118,6 +122,10 @@ data class AppState(
     val notice: String? = null,
     val error: String? = null,
     val voiceText: String? = null,
+    val taskReceipt: TaskReceipt? = null,
+    val saving: Boolean = false,
+    val savedItemId: String? = null,
+    val saveError: String? = null,
 )
 
 interface AppActions {
@@ -156,6 +164,7 @@ interface AppActions {
     fun requestNotifications() {}
     fun requestPreciseReminders() {}
     fun consumeTaskSelection() {}
+    fun undoAgentTasks() {}
 }
 
 object Amounts {

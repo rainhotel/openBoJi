@@ -46,6 +46,37 @@ class PiAssistantTest {
         (0 until rows.length()).map { rows.getJSONObject(it) }.filter { it.optString("role") == "tool" }.joinToString { it.optString("content") }
     }
 
+    @Test fun directTaskToolCreatesUpdatesAndReportsRealIdsWithUndo() = runBlocking {
+        store.saveSettings(settings)
+        var turn=0;var realId=""
+        val runtime=create(AssistantTransport { _,_,body ->when(++turn) {
+            1 ->call("create_tasks",JSONObject().put("tasks",JSONArray().put(JSONObject().put("domain","TRAINING").put("title","练胸").put("date",LocalDate.now().toString()))))
+            2 -> {
+                realId=store.snapshot().plans.single().id
+                assertTrue(toolTexts(body).contains(realId));assertTrue(toolTexts(body).contains("\"saved\":true"))
+                call("update_tasks",JSONObject().put("changes",JSONArray().put(JSONObject().put("id",realId).put("priority",0))))
+            }
+            else ->answer("已创建并调整优先级")
+        } })
+        val reply=runtime.respond("今天练胸，优先级P0",store.snapshot())
+        assertTrue(reply.success);assertNull(reply.draft)
+        assertEquals(0,store.snapshot().plans.single().priority)
+        assertEquals(listOf(realId),store.snapshot().taskReceipt!!.createdIds)
+        store.undoAgentTasks();assertTrue(store.snapshot().plans.isEmpty())
+    }
+
+    @Test fun taskReceiptRemainsTruthfulWhenProviderFailsAfterCommit() = runBlocking {
+        store.saveSettings(settings)
+        var turn=0
+        val runtime=create(AssistantTransport { _,_,_ ->
+            if(++turn==1)call("create_tasks",JSONObject().put("tasks",JSONArray().put(JSONObject().put("domain","LEARNING").put("title","复习").put("date",LocalDate.now().toString()))))
+            else throw AssistantFailure("网络已中断")
+        })
+        val reply=runtime.respond("今天复习",store.snapshot())
+        assertFalse(reply.success);assertEquals(1,store.snapshot().plans.size);assertNotNull(store.snapshot().taskReceipt)
+        store.undoAgentTasks();assertTrue(store.snapshot().plans.isEmpty())
+    }
+
     @Test fun skillToolsMemoryDraftAndRestartRunInsideAndroid() = runBlocking {
         store.saveSettings(settings)
         assertEquals(settings.memory,store.snapshot().settings.memory)
@@ -79,6 +110,7 @@ class PiAssistantTest {
     @Test fun ungrantedHistoryAndFinanceNeverEnterModelContext() = runBlocking {
         val finance=LifeRecord(domain=Domain.FINANCE,title="PRIVATE_FINANCE",amountFen=5000)
         val learning=LifeRecord(domain=Domain.LEARNING,title="PRIVATE_LEARNING",minutes=30)
+        store.saveRecord(finance);store.saveRecord(learning)
         val state=AppState(settings=settings.copy(includeHistory=false,includeMemory=false,memory="PRIVATE_MEMORY"),records=listOf(finance,learning))
         var turn=0; val payloads=mutableListOf<String>()
         val runtime=create(AssistantTransport { _,_,body ->
@@ -89,7 +121,8 @@ class PiAssistantTest {
         for(payload in payloads) {
             assertFalse(payload.contains("PRIVATE_FINANCE")); assertFalse(payload.contains("PRIVATE_LEARNING")); assertFalse(payload.contains("PRIVATE_MEMORY"))
         }
-        assertTrue(toolTexts(payloads.last()).contains("尚未授权"))
+        val exposed=JSONObject(payloads.first()).getJSONArray("tools").toString()
+        assertFalse(exposed.contains("search_records"));assertFalse(exposed.contains("memory_read"))
         turn=0; payloads.clear()
         val permitted=state.copy(settings=settings.copy(includeHistory=true,includeFinance=false))
         assertTrue(runtime.respond("查看记录",permitted).success)

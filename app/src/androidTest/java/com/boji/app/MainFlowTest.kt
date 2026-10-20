@@ -30,7 +30,7 @@ class MainFlowTest {
         beforePlans=snapshot.plans.map { it.id }.toSet()
         beforeGoals=snapshot.goals.map { it.id }.toSet()
         Assume.assumeFalse("Local assistant test needs cloud disabled",snapshot.settings.enabled)
-        compose.waitUntil(10_000) { compose.onAllNodesWithText("待完成").fetchSemanticsNodes().isNotEmpty() }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("assistant-input").fetchSemanticsNodes().isNotEmpty() }
     }
 
     @After fun cleanUp() {
@@ -45,12 +45,19 @@ class MainFlowTest {
 
     @Test fun planCompletionAndThreeDomainAssistantFlow() {
         val title="验收学习-${System.nanoTime().toString().takeLast(5)}"
-        compose.onNodeWithText("加计划").performClick()
+        tab("日程")
+        compose.onAllNodesWithText("加计划").onFirst().performClick()
         compose.onNodeWithText("要做什么").performTextInput(title)
-        compose.onNodeWithText("预计时长（分钟）").performTextReplacement("30")
+        compose.onNodeWithText("更多选项").performClick()
+        compose.onNodeWithText("预计时长（分钟）").performScrollTo().performTextReplacement("30")
         compose.onNodeWithText("保存计划").performScrollTo().performClick()
         compose.waitUntil(10_000) { store.snapshot().plans.any { it.title == title } }
-        compose.onNodeWithText("完成",substring=false).performClick()
+        compose.waitUntil(10_000) {compose.onAllNodesWithText("要做什么").fetchSemanticsNodes().isEmpty()}
+        val createdPlan=store.snapshot().plans.single {it.title==title}
+        compose.onNodeWithTag("task-calendar").performScrollToNode(hasText(title))
+        compose.onNodeWithTag("plan-complete-${createdPlan.id}").performScrollTo().performClick()
+        try {compose.waitUntil(5000) {compose.onAllNodesWithText("时长（分钟）").fetchSemanticsNodes().isNotEmpty()}}
+        catch(error:Throwable) {capture("qa-completion-failure");throw AssertionError(compose.onRoot(useUnmergedTree=true).printToString(),error)}
         compose.onNodeWithText("时长（分钟）").performTextReplacement("20")
         compose.onNodeWithText("保存",substring=false).performScrollTo().performClick()
         compose.waitUntil(10_000) { store.snapshot().records.any { it.title == title } }
@@ -77,7 +84,7 @@ class MainFlowTest {
         assertEquals(setOf(Domain.TRAINING,Domain.FINANCE,Domain.LEARNING),generated.map { it.domain }.toSet())
         assertEquals(2800L,generated.single { it.domain == Domain.FINANCE }.amountFen)
 
-        tab("空间")
+        tab("积累")
         compose.onNodeWithText("搜索记录").performTextInput("Redis")
         compose.onNodeWithContentDescription("切换表格").performClick()
         compose.onNodeWithText(generated.single { it.domain == Domain.LEARNING }.title).assertExists()
@@ -86,13 +93,14 @@ class MainFlowTest {
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10_000) { compose.onAllNodesWithText("搜索记录").fetchSemanticsNodes().isNotEmpty() }
         assertEquals(before.size+4,store.snapshot().records.size)
-        tab("日历")
+        tab("日程")
         compose.onNodeWithContentDescription("${LocalDate.now()} 有记录或计划").assertExists()
         capture("04-calendar")
     }
 
     @Test fun weeklyGoalUsesActualRecordWithoutSecondCheckin() {
         val title="每周练拳-${System.nanoTime().toString().takeLast(4)}"
+        tab("积累")
         compose.onNodeWithText("添加",substring=false).performScrollTo().performClick()
         compose.onNodeWithText("目标",substring=false).performTextInput(title)
         compose.onNodeWithText("每次至少几分钟").performTextInput("20")

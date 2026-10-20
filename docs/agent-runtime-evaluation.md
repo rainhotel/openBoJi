@@ -1,6 +1,6 @@
 # 薄肌 Agent：选型与实现
 
-2026-10-19。选择 **Pi Agent Core 1.3.0**，在 Android 的隔离 WebView 中本地运行。没有增加远程 Agent 服务或手机 Node 环境。原生 Kotlin 界面和 SQLite 保留。
+v0.3 沿用 **Pi Agent Core 1.3.0**，在 Android 的隔离 WebView 中本地运行。没有增加远程 Agent 服务或手机 Node 环境。原生 Kotlin 界面和 SQLite 保留。
 
 | 候选 | 判断 |
 | --- | --- |
@@ -17,7 +17,9 @@ flowchart TD
     VM --> Pi[本机 WebView：Pi Agent Core]
     Pi --> Skill[复用 Pi Skill 加载器]
     Pi --> Port[受控原生接口]
-    Port --> DB[本机 SQLite / 只读业务查询]
+    Port --> DB[本机 SQLite / 授权查询]
+    Port --> Tasks[明确指令：创建和修改任务]
+    Tasks -->|事务 + 可撤销回执| DB
     Port --> Memory[长期偏好 / 本地会话文件]
     Port --> Draft[草稿校验]
     Draft --> UI
@@ -49,6 +51,10 @@ v0.2 只适配 DeepSeek 官方接口，默认地址预置，通过 `/models` 查
 
 每次运行最多八轮模型响应、24 次工具执行，总时限三分钟。停止时取消 Pi、清理待处理端口请求并断开原生 HTTP。失败不会自动重试写入。Tool 错误只返回经过处理的文字，不回显密钥或原始供应商错误。
 
+v0.3 新增 `create_tasks` / `update_tasks`。明确任务指令经本地字段/关系校验后直接在单次事务中保存；工具返回真实 ID，读取工具从最新数据库查询。权限未开启的读取工具不在当轮工具目录中，原生端仍独立校验授权。创建支持子任务在父任务之前出现的批次、完整重复复用；同名同日同刻但其他字段不同返回可恢复的冲突，避免静默吞掉新要求。修改只接受真实 ID 和有限字段，不删除任务、不伪造完成记录。
+
+每轮任务操作保存可跨重启恢复的撤销回执：撤销前比对实际状态，有后续编辑、完成记录或外部关联就拒绝覆盖。纯重复的新请求不展示上一请求的撤销。工具已提交后即使后续模型请求失败，回执和任务仍显示；记录和记忆继续使用 `propose_draft`，在聊天中一次确认，也能展开核对。草稿不再锁死下一条输入。
+
 Skill 导入支持有 name/description YAML 头部的单个 `.md`，每份 64 KB、最多 30 份；可查看和移除。没有文件夹附件、脚本执行或任意第三方 Tool 插件安装。新增原生工具需开发并声明 Schema，不以“支持 Skills”冒充任意代码执行能力。
 
-当前模型协议为 Chat Completions + function tools，逐轮返回内容、显示工具状态；还未实现 token 流式输出、自动语义压缩、向量记忆、MCP、后台持久任务或多 Agent 调度。云端模型质量、时延和费用取决于用户连接，当前没有用户密钥，验收只覆盖脚本化供应商响应与真实手机运行时之间的链路。
+当前模型协议为 Chat Completions + function tools，逐轮返回内容、显示工具状态；还未实现 token 流式输出、自动语义压缩、向量记忆、MCP、后台持久任务或多 Agent 调度。真实云端用例由 `scripts/test-live-deepseek.ps1` 显式启用，运行范围和结果以[验收记录](./implementation-status.md)及实际结果文件为准。普通回归使用脚本化供应商响应；真实云端时延和费用取决于用户连接。

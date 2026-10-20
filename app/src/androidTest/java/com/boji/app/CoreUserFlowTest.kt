@@ -24,7 +24,7 @@ class CoreUserFlowTest {
         store=BojiStore(InstrumentationRegistry.getInstrumentation().targetContext)
         before=store.snapshot();oldDraft=store.settingsDraft()
         Assume.assumeFalse(before.settings.enabled);Assume.assumeTrue(before.draft==null)
-        compose.waitUntil(10000){compose.onAllNodesWithText("待完成").fetchSemanticsNodes().isNotEmpty()}
+        compose.waitUntil(10000){compose.onAllNodesWithTag("assistant-input").fetchSemanticsNodes().isNotEmpty()}
     }
     @After fun cleanup() {
         if(::before.isInitialized) {
@@ -104,7 +104,7 @@ class CoreUserFlowTest {
         compose.onNodeWithText("确认保存").performScrollTo().performClick()
         compose.waitUntil(10000){store.snapshot().records.any {it.planId==plan.id}}
         assertEquals(PlanStatus.DONE,store.snapshot().plans.find {it.id==plan.id}!!.status)
-        tab("日历")
+        tab("日程")
         compose.onNodeWithText("多维表格").performClick()
         compose.onNodeWithText(plan.title).assertExists()
         compose.onNodeWithText("已完成",substring=false).assertExists()
@@ -115,6 +115,10 @@ class CoreUserFlowTest {
         } finally {
             compose.runOnUiThread {compose.activity.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED}
         }
+        compose.waitUntil(10000){compose.activity.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_PORTRAIT}
+        InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+        android.os.SystemClock.sleep(400)
+        compose.waitForIdle()
         compose.onNode(hasText("日历") and hasClickAction() and isSelectable()).performClick()
         compose.onNodeWithTag("task-table").assertDoesNotExist()
         compose.onNodeWithTag("task-calendar").performScrollToNode(hasText(plan.title))

@@ -33,6 +33,7 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
             messages = rows(db, "messages", "seq").map { ModelJson.message(it) },
             draft = readMeta(db, PENDING_DRAFT)?.let { ModelJson.draft(JSONObject(it)) },
             memories=readMemories(db),
+            taskReceipt=readMeta(db,"task-receipt")?.let {ModelJson.receipt(JSONObject(it))},
         )
     }
 
@@ -58,6 +59,76 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
 
     @Synchronized
     fun savePlan(plan: Plan) = savePlans(listOf(plan))
+
+    /** A single native transaction owns task writes and their undo receipt, even if the model stops later. */
+    @Synchronized
+    fun writeAgentTasks(runId: String, creates: List<Plan> = emptyList(), changes: List<Pair<Plan,Plan>> = emptyList()): List<Plan> = transaction { db ->
+        require(creates.size + changes.size in 1..180) { "一次操作需要 1 到 180 个任务" }
+        val data=readData(db)
+        DataValidation.unique(creates.map {it.id} + changes.map {it.second.id},"任务")
+        require(creates.all {candidate -> data.plans.none {it.id==candidate.id && it!=candidate}}) {"创建不能覆盖已有任务"}
+        changes.forEach { (old,new) ->
+            require(old.id==new.id && data.plans.find {it.id==old.id}==old) { "任务已被修改，请重新查询后再操作" }
+        }
+        val resolved=mutableListOf<Plan>()
+        val aliases=mutableMapOf<String,String>()
+        val incoming=creates.associateBy {it.id}
+        val visiting=mutableSetOf<String>()
+        // Resolve parents first, including child-first batches and references to an existing duplicate parent.
+        fun resolve(source:Plan):String {
+            aliases[source.id]?.let {return it}
+            require(visiting.add(source.id)) {"任务关联存在循环"}
+            val parent=incoming[source.parentId]?.let {resolve(it)} ?: source.parentId
+            val candidate=source.copy(title=source.title.trim(),parentId=parent)
+            val existing=(data.plans+resolved).find { it.status!=PlanStatus.ARCHIVED &&
+                it.title.trim()==candidate.title && it.domain==candidate.domain && it.date==candidate.date && it.time==candidate.time }
+            require(existing==null || existing.copy(id=candidate.id)==candidate) {
+                "同名同日同时间已有任务但字段不同，请查询该任务并使用 update_tasks 修改"
+            }
+            val actual=existing?.id ?: candidate.id
+            aliases[source.id]=actual;visiting.remove(source.id)
+            if(existing==null)resolved.add(candidate)
+            return actual
+        }
+        creates.forEach {resolve(it)}
+        val inserted=resolved.toList()
+        val after=data.copy(plans=merge(data.plans,inserted+changes.map {it.second}) {it.id})
+        DataValidation.data(after)
+        val previous=readMeta(db,"task-receipt")?.let {ModelJson.receipt(JSONObject(it))}?.takeIf {it.id==runId}
+        if(inserted.isNotEmpty() || changes.isNotEmpty()) {
+            val created=(previous?.createdIds.orEmpty()+inserted.map {it.id}).distinct()
+            val originals=(previous?.before.orEmpty()+changes.map {it.first}).distinctBy {it.id}.filterNot {it.id in created}
+            val affected=(previous?.after.orEmpty().map {it.id}+inserted.map {it.id}+changes.map {it.second.id}).toSet()
+            val receipt=TaskReceipt(runId,created,originals,after.plans.filter {it.id in affected})
+            persistData(db,data,after)
+            putMeta(db,"task-receipt",ModelJson.receipt(receipt).toString())
+        } else if(previous==null) {
+            // A new request that only finds existing tasks must not offer undo for an unrelated old request.
+            db.delete("meta","name = ?",arrayOf("task-receipt"))
+        }
+        creates.map {candidate -> after.plans.first {it.id==(aliases[candidate.id] ?: candidate.id)}}+changes.map {it.second}
+    }
+
+    @Synchronized fun undoAgentTasks() = transaction { db ->
+        val receipt=readMeta(db,"task-receipt")?.let {ModelJson.receipt(JSONObject(it))} ?: error("没有可撤销的任务操作")
+        val data=readData(db)
+        require(receipt.after.all { task -> data.plans.find {it.id==task.id}==task }) { "任务已发生后续变化，请直接编辑任务" }
+        require(data.records.none {it.planId in receipt.createdIds} && data.plans.none {it.id !in receipt.createdIds && it.parentId in receipt.createdIds}) {
+            "任务已有记录或关联子任务，请直接编辑任务"
+        }
+        val remaining=data.plans.filterNot {it.id in receipt.createdIds}
+        val after=data.copy(plans=merge(remaining,receipt.before) {it.id})
+        DataValidation.data(after);persistData(db,data,after)
+        db.delete("meta","name = ?",arrayOf("task-receipt"))
+    }
+
+    @Synchronized fun attachTaskReceipt(messageId:String) = transaction {db ->
+        DataValidation.id(messageId)
+        readMeta(db,"task-receipt")?.let {raw ->
+            val receipt=ModelJson.receipt(JSONObject(raw))
+            putMeta(db,"task-receipt",ModelJson.receipt(receipt.copy(messageId=messageId)).toString())
+        }
+    }
 
     @Synchronized
     fun savePlans(plans: List<Plan>, recurrence: String? = null) {
@@ -171,6 +242,11 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
     }
 
     /** Batch id is committed with all facts/plans, so retry and process restart cannot double count. */
+    @Synchronized fun applyDraftWithMessage(batch:DraftBatch,message:ChatMessage) = transaction {
+        DataValidation.message(message)
+        applyDraft(batch);saveMessage(message)
+    }
+
     @Synchronized
     fun applyDraft(batch: DraftBatch) {
         DataValidation.id(batch.id)

@@ -25,6 +25,7 @@ import org.json.JSONObject
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -73,10 +74,16 @@ fun BojiApp(state: AppState, actions: AppActions) {
         var plan by rememberSaveable(stateSaver=Saver<Plan,String>(save={ModelJson.plan(it).toString()},restore={ModelJson.plan(JSONObject(it))})) { mutableStateOf(Plan()) }
         var goal by rememberSaveable(stateSaver=Saver<WeeklyGoal,String>(save={ModelJson.goal(it).toString()},restore={ModelJson.goal(JSONObject(it))})) { mutableStateOf(WeeklyGoal()) }
         var deletion by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
+        var waitingSave by rememberSaveable {mutableStateOf<String?>(null)}
+        var taskDate by rememberSaveable {mutableStateOf<String?>(null)}
         val snackbar = remember { SnackbarHostState() }
         val today = LocalDate.parse(state.today)
-        fun openRecord(value: LifeRecord) { record = value; sheet = "record" }
-        fun openPlan(value: Plan) { plan = value; sheet = "plan" }
+        fun openRecord(value: LifeRecord) { waitingSave=null;record = value; sheet = "record" }
+        fun openPlan(value: Plan) { waitingSave=null;plan = value; sheet = "plan" }
+        LaunchedEffect(state.savedItemId,state.saving,waitingSave) {
+            val sameEditor=(sheet=="plan" && plan.id==waitingSave) || (sheet=="record" && record.id==waitingSave) || (sheet=="draft" && state.draft==null)
+            if(waitingSave!=null && state.savedItemId==waitingSave && !state.saving && sameEditor) {sheet=null;waitingSave=null}
+        }
         LaunchedEffect(state.openTaskId,state.loading) {
             if(!state.loading && state.openTaskId!=null) {
                 state.plans.find { it.id==state.openTaskId }?.let { openPlan(it) }
@@ -121,7 +128,7 @@ fun BojiApp(state: AppState, actions: AppActions) {
                 Column(Modifier.background(Color.White).navigationBarsPadding()) {
                     HorizontalDivider(color = Line)
                     Row(Modifier.fillMaxWidth().height(72.dp)) {
-                        listOf("今日" to "today", "助手" to "chat", "日历" to "calendar", "空间" to "grid").forEachIndexed { index, item ->
+                        listOf("助手" to "chat", "日程" to "calendar", "积累" to "grid").forEachIndexed { index, item ->
                             Column(Modifier.weight(1f).fillMaxHeight().clickable { tab = index },
                                 verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                                 Box(Modifier.size(width = 56.dp, height = 30.dp)
@@ -136,7 +143,7 @@ fun BojiApp(state: AppState, actions: AppActions) {
                 }
             },
             floatingActionButton = {
-                if (tab != 1 && !state.loading) {
+                if (tab == 2 && !state.loading) {
                     ExtendedFloatingActionButton(onClick = { openRecord(LifeRecord()) }, modifier = Modifier.testTag("record-fab"),
                         containerColor = Ink, contentColor = Color.White,
                         shape = RoundedCornerShape(24.dp),
@@ -144,16 +151,13 @@ fun BojiApp(state: AppState, actions: AppActions) {
                 }
             },
         ) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding)) {
+            Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
                 if (state.loading) CircularProgressIndicator(Modifier.align(Alignment.Center), color = Ink)
                 else AnimatedContent(targetState = tab, label = "页面") { selected ->
                     pageStates.SaveableStateProvider(selected) {
                     when (selected) {
-                        0 -> TodayPage(state, ::openRecord, ::openPlan, ::completePlan,
-                            { goal = WeeklyGoal(); sheet = "goal" },
-                            { goal = it; sheet = "goal" })
-                        1 -> AssistantPage(state, actions, { sheet = "draft" }, { sheet = "settings" })
-                        2 -> TaskWorkspace(state,actions,::openRecord,::openPlan,::completePlan)
+                        0 -> AssistantPage(state, actions, { sheet = "draft" }, { sheet = "settings" }, {date ->taskDate=date;tab=1})
+                        1 -> TaskWorkspace(state,actions,::openRecord,::openPlan,::completePlan,requestedDate=taskDate,onDateHandled={taskDate=null})
                         else -> SpacePage(state, actions, ::openRecord, { goal = WeeklyGoal(); sheet = "goal" },
                             { goal = it; sheet = "goal" })
                     }
@@ -166,14 +170,14 @@ fun BojiApp(state: AppState, actions: AppActions) {
                 sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true,confirmValueChange={it!=SheetValue.Hidden}),
                 containerColor = Color.White, dragHandle = { BottomSheetDefaults.DragHandle(color = Line) }) {
                 when (sheet) {
-                    "record" -> RecordEditor(record, state.goals, state.plans,
-                        onSave = { actions.saveRecord(it); sheet = null },
+                    "record" -> RecordEditor(record, state.goals, state.plans,saving=state.saving,saveError=state.saveError.takeIf {waitingSave==record.id},
+                        onSave = { waitingSave=it.id;actions.saveRecord(it) },
                         onCancel = { sheet = null },
                         onDelete = if (state.records.any { it.id == record.id }) ({
                             deletion = "删除这条记录？" to { actions.deleteRecord(record.id); sheet = null }
                         }) else null)
-                    "plan" -> PlanEditor(plan, state.goals,records=state.records,onEditRecord=::openRecord,
-                        onSave = { value, repeats -> actions.savePlan(value, repeats); sheet = null },
+                    "plan" -> PlanEditor(plan, state.goals,records=state.records,onEditRecord=::openRecord,saving=state.saving,saveError=state.saveError.takeIf {waitingSave==plan.id},
+                        onSave = { value, repeats -> waitingSave=value.id;actions.savePlan(value, repeats) },
                         onCancel = { sheet = null },
                         onSkip = if (state.plans.any { it.id == plan.id } && plan.status == PlanStatus.TODO) ({ actions.skipPlan(plan.id); sheet = null }) else null,
                         onDelete = if (state.plans.any { it.id == plan.id }) ({
@@ -182,7 +186,7 @@ fun BojiApp(state: AppState, actions: AppActions) {
                     "goal" -> GoalEditor(goal, onSave = { actions.saveGoal(it); sheet = null }, onCancel = { sheet = null },
                         onArchive = if (state.goals.any { it.id == goal.id }) ({ actions.archiveGoal(goal.id); sheet = null }) else null)
                     "draft" -> state.draft?.let { batch -> DraftEditor(batch, state.goals, state.plans,notificationsAllowed=state.notificationsAllowed,onChange=actions::saveDraft,
-                        onConfirm = { actions.confirmDraft(it); sheet = null }, onDismiss = { actions.dismissDraft(); sheet = null }) }
+                        onConfirm = { waitingSave=it.id;actions.confirmDraft(it) }, onDismiss = { actions.dismissDraft(); sheet = null }) }
                 }
             }
         }
@@ -222,12 +226,15 @@ private fun TodayPage(state: AppState, record: (LifeRecord) -> Unit, plan: (Plan
 }
 
 @Composable
-internal fun CalendarPage(state: AppState, record: (LifeRecord) -> Unit, plan: (Plan) -> Unit, complete: (Plan) -> Unit,showTitle: Boolean=true) {
-    var selected by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
-    var monthText by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
+internal fun CalendarPage(state: AppState, record: (LifeRecord) -> Unit, plan: (Plan) -> Unit, complete: (Plan) -> Unit,showTitle: Boolean=true,
+    selectedDate:String=state.today,onSelectDate:(String)->Unit={}) {
+    val selected=selectedDate
+    var monthText by rememberSaveable { mutableStateOf(selected.take(7)) }
+    var expandedMonth by rememberSaveable {mutableStateOf(false)}
+    LaunchedEffect(selectedDate) {monthText=selectedDate.take(7)}
     val month = YearMonth.parse(monthText)
     val date = LocalDate.parse(selected)
-    val plans = state.plans.filter { it.date == selected }.sortedBy { it.time }
+    val plans = state.plans.filter { it.date == selected }
     val records = state.records.filter { it.date == selected }.sortedByDescending { it.createdAt }
     val eventDates = (state.records.map { it.date } + state.plans.map { it.date }).toSet()
     LazyColumn(Modifier.fillMaxSize().testTag("task-calendar"), contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 112.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -235,25 +242,26 @@ internal fun CalendarPage(state: AppState, record: (LifeRecord) -> Unit, plan: (
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("${month.year}年 ${month.monthValue}月", fontWeight = FontWeight.SemiBold, fontSize = 19.sp, modifier = Modifier.weight(1f))
-                TextButton(onClick = { selected = LocalDate.now().toString(); monthText = YearMonth.now().toString() }) { Text("今天") }
-                IconButton(onClick = { monthText = month.minusMonths(1).toString() }) { Glyph("left", description = "上个月") }
-                IconButton(onClick = { monthText = month.plusMonths(1).toString() }) { Glyph("right", description = "下个月") }
+                TextButton(onClick = { onSelectDate(state.today); monthText = YearMonth.parse(state.today.take(7)).toString() }) { Text("今天") }
+                TextButton(onClick={expandedMonth=!expandedMonth}) {Text(if(expandedMonth)"收起" else "月历",fontSize=12.sp)}
+                IconButton(onClick = { monthText = month.minusMonths(1).toString();expandedMonth=true }) { Glyph("left", description = "上个月") }
+                IconButton(onClick = { monthText = month.plusMonths(1).toString();expandedMonth=true }) { Glyph("right", description = "下个月") }
             }
             Row(Modifier.fillMaxWidth().padding(vertical = 8.dp)) { WeekNames.forEach { Text(it, Modifier.weight(1f), textAlign = androidx.compose.ui.text.style.TextAlign.Center, color = Muted, fontSize = 12.sp) } }
             val offset = month.atDay(1).dayOfWeek.value - 1
             val cells = ((offset + month.lengthOfMonth() + 6) / 7) * 7
-            repeat(cells / 7) { week ->
+            repeat(if(expandedMonth)cells / 7 else 1) { week ->
                 Row(Modifier.fillMaxWidth()) {
                     repeat(7) { weekday ->
                         val number = week * 7 + weekday - offset + 1
                         Box(Modifier.weight(1f).height(48.dp), contentAlignment = Alignment.Center) {
-                            if (number in 1..month.lengthOfMonth()) {
-                                val d = month.atDay(number)
+                            if (!expandedMonth || number in 1..month.lengthOfMonth()) {
+                                val d = if(expandedMonth)month.atDay(number) else Progress.weekStart(date).plusDays(weekday.toLong())
                                 val active = d == date
                                 Column(Modifier.size(42.dp).clip(RoundedCornerShape(14.dp)).background(if (active) Ink else if (d == LocalDate.now()) Soft else Color.Transparent)
-                                    .clickable { selected = d.toString() }.semantics { contentDescription = "$d${if (eventDates.contains(d.toString())) " 有记录或计划" else ""}" },
+                                    .clickable { onSelectDate(d.toString()) }.semantics { contentDescription = "$d${if (eventDates.contains(d.toString())) " 有记录或计划" else ""}" },
                                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
-                                    Text(number.toString(), color = if (active) Color.White else Ink, fontSize = 15.sp)
+                                    Text(d.dayOfMonth.toString(), color = if (active) Color.White else Ink, fontSize = 15.sp)
                                     Box(Modifier.padding(top = 2.dp).size(3.dp).background(if (eventDates.contains(d.toString())) { if (active) Color.White else Ink } else Color.Transparent, CircleShape))
                                 }
                             }
@@ -361,10 +369,11 @@ private fun SpacePage(state: AppState, actions: AppActions, editRecord: (LifeRec
 }
 
 @Composable
-private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () -> Unit, settings: () -> Unit) {
+private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () -> Unit, settings: () -> Unit,showTasks:(String)->Unit) {
     var text by rememberSaveable { mutableStateOf("") }
     var submitted by rememberSaveable { mutableStateOf<String?>(null) }
-    fun send() { if(!state.assistantBusy && state.draft==null && (text.isNotBlank() || state.pendingImage!=null)) { submitted=text.trim();actions.sendMessage(text.trim()) } }
+    val keyboard=LocalSoftwareKeyboardController.current
+    fun send() { if(!state.assistantBusy && !state.saving && (text.isNotBlank() || state.pendingImage!=null)) { submitted=text.trim();actions.sendMessage(text.trim());keyboard?.hide() } }
     LaunchedEffect(state.messages.lastOrNull()?.id) {
         val last=state.messages.lastOrNull()
         if(last?.user==true && last.text.removeSuffix("\n[图片]")==submitted) {
@@ -376,33 +385,34 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
     LaunchedEffect(state.voiceText) {
         state.voiceText?.let { recognized -> text = if (text.isBlank()) recognized else "$text $recognized"; actions.consumeVoice() }
     }
-    LaunchedEffect(state.messages.size, state.draft, state.assistantBusy) {
-        if (state.messages.isNotEmpty()) listState.animateScrollToItem(state.messages.size.coerceAtLeast(0))
+    LaunchedEffect(state.messages.size, state.draft, state.assistantBusy,state.taskReceipt) {
+        if (state.messages.isNotEmpty()) listState.animateScrollToItem((listState.layoutInfo.totalItemsCount-1).coerceAtLeast(0))
     }
     Column(Modifier.fillMaxSize().imePadding()) {
         Row(Modifier.padding(horizontal = 24.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text("助手", fontSize = 30.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f).padding(top = 8.dp, bottom = 14.dp))
             TextButton(onClick = settings) { Text(if (state.settings.enabled) state.settings.connections.getOrNull(state.settings.activeIndex)?.name ?: "模型" else "连接模型", fontSize = 12.sp) }
         }
-        Row(Modifier.padding(horizontal = 24.dp).horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf("综合", "训练", "财务", "学习").forEach { role -> FilterChip(selected = state.settings.role == role,
-                onClick = { actions.saveSettings(state.settings.copy(role = role)) }, label = { Text(role, fontSize = 12.sp) }) }
-        }
         LazyColumn(state = listState, modifier = Modifier.weight(1f), contentPadding = PaddingValues(24.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
             item {
                 if (state.messages.isEmpty()) Column(Modifier.fillMaxWidth().padding(top = 38.dp, bottom = 24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                     Box(Modifier.size(54.dp).background(Soft, RoundedCornerShape(18.dp)), contentAlignment = Alignment.Center) { Glyph("mark", modifier = Modifier.size(28.dp)) }
-                    Text("记下来，或安排一下", fontWeight = FontWeight.Medium, fontSize = 20.sp, modifier = Modifier.padding(top = 20.dp, bottom = 10.dp))
-                    Text("练拳 40 分钟，晚饭 28 元，读书半小时", color = Muted, fontSize = 13.sp)
+                    Text("说一句，就安排好", fontWeight = FontWeight.Medium, fontSize = 20.sp, modifier = Modifier.padding(top = 20.dp, bottom = 10.dp))
+                    Text("安排日程、记录训练，也记住你的习惯", color = Muted, fontSize = 13.sp)
                     Spacer(Modifier.height(20.dp))
-                    OutlinedButton(onClick = { text = "帮我安排本周的训练和学习" }, shape = RoundedCornerShape(18.dp)) { Text("安排这一周", fontSize = 13.sp) }
+                    OutlinedButton(onClick = { text = "明天晚上八点练胸40分钟，提前10分钟提醒" }, shape = RoundedCornerShape(18.dp)) { Text("安排明天的训练", fontSize = 13.sp) }
                     if (!state.settings.enabled) Text("本地可识别文字记录；规划需连接模型", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 16.dp))
                 }
             }
             items(state.messages, key = { it.id }) { message ->
+                Column {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.user) Arrangement.End else Arrangement.Start) {
                     Text(message.text, Modifier.widthIn(max = 308.dp).then(if (message.user) Modifier.background(Soft, RoundedCornerShape(22.dp)).padding(16.dp) else Modifier.padding(vertical = 4.dp)),
                         color = Ink, fontSize = 15.sp, lineHeight = 24.sp)
+                }
+                state.taskReceipt?.takeIf {it.messageId==message.id && it.after.any {task ->state.plans.any {it.id==task.id}}}?.let {
+                    TaskReceiptCard(it,state,actions,showTasks)
+                }
                 }
             }
             if (state.assistantBusy) item {
@@ -412,6 +422,9 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
                     TextButton(onClick = actions::cancelAssistant) { Text("停止", fontSize = 13.sp) }
                 }
             }
+            state.taskReceipt?.takeIf {receipt ->receipt.messageId==null && receipt.after.any {task ->state.plans.any {it.id==task.id}}}?.let {receipt -> item(key="task-receipt") {
+                TaskReceiptCard(receipt,state,actions,showTasks)
+            } }
             state.draft?.let { draft -> item {
                 Surface(shape = RoundedCornerShape(20.dp), color = Soft) {
                     Column(Modifier.fillMaxWidth().padding(18.dp)) {
@@ -420,7 +433,10 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
                         draft.memories.take(3).forEach { Text(it.text,fontSize=14.sp,modifier=Modifier.padding(vertical=4.dp)) }
                         draft.records.take(3).forEach { Text("${it.title}  ${recordValue(it)}", fontSize = 14.sp, modifier = Modifier.padding(vertical = 4.dp)) }
                         draft.plans.take(3).forEach { Text("${it.date.takeLast(5)}  ${it.title}", fontSize = 14.sp, modifier = Modifier.padding(vertical = 4.dp)) }
-                        Button(onClick = showDraft, modifier = Modifier.fillMaxWidth().padding(top = 12.dp), shape = RoundedCornerShape(16.dp)) { Text("核对并保存") }
+                        Button(onClick = {actions.confirmDraft(draft)},enabled=!state.saving && !state.assistantBusy,modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag("chat-confirm-draft"), shape = RoundedCornerShape(16.dp)) {
+                            Text(if(state.saving)"保存中…" else if(draft.records.isNotEmpty())"保存记录" else if(draft.memories.isNotEmpty())"记住" else "创建任务")
+                        }
+                        Row {TextButton(onClick=showDraft){Text("核对并保存")};TextButton(onClick=actions::dismissDraft,enabled=!state.assistantBusy && !state.saving){Text("放下")}}
                     }
                 }
             } }
@@ -445,9 +461,25 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
                         IconButton(onClick = actions::voiceInput, enabled = !state.assistantBusy) { Glyph("mic", description = "语音输入") }
                         Spacer(Modifier.weight(1f))
                         FilledIconButton(onClick = ::send,
-                            enabled = !state.assistantBusy && state.draft == null && (text.isNotBlank() || state.pendingImage != null), modifier = Modifier.size(48.dp).testTag("assistant-send")) { Glyph("up", Color.White, description = "发送") }
+                            enabled = !state.assistantBusy && !state.saving && (text.isNotBlank() || state.pendingImage != null), modifier = Modifier.size(48.dp).testTag("assistant-send")) { Glyph("up", Color.White, description = "发送") }
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable private fun TaskReceiptCard(receipt:TaskReceipt,state:AppState,actions:AppActions,showTasks:(String)->Unit) {
+    Surface(shape=RoundedCornerShape(20.dp),color=Soft,modifier=Modifier.padding(top=8.dp)) {
+        Column(Modifier.fillMaxWidth().padding(18.dp)) {
+            Text("已保存到日程",fontWeight=FontWeight.Medium)
+            receipt.after.take(4).forEach {task ->Text("${task.date.takeLast(5)} ${task.time}  ${task.title}",fontSize=14.sp,modifier=Modifier.padding(top=8.dp))}
+            if(receipt.after.size>4)Text("共 ${receipt.after.size} 个任务",fontSize=13.sp,color=Muted)
+            if(receipt.after.any {it.reminderMinutes!=null} && !state.notificationsAllowed)
+                TextButton(onClick=actions::requestNotifications){Text("开启通知，启用提醒")}
+            Row {
+                TextButton(onClick={showTasks(receipt.after.first().date)}){Text("查看日程")}
+                TextButton(onClick=actions::undoAgentTasks,enabled=!state.assistantBusy && !state.saving){Text("撤销上次操作")}
             }
         }
     }
@@ -476,7 +508,7 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
                 if (plan.domain != Domain.FINANCE) "${plan.expectedMinutes} 分钟" else "").filter { it.isNotEmpty() }.joinToString(" · ")
             Text(subtitle, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 5.dp))
         }
-        if (plan.status in setOf(PlanStatus.TODO,PlanStatus.IN_PROGRESS)) TextButton(onClick = onComplete) { Text("完成", fontSize = 13.sp) }
+        if (plan.status in setOf(PlanStatus.TODO,PlanStatus.IN_PROGRESS)) TextButton(onClick = onComplete,modifier=Modifier.testTag("plan-complete-${plan.id}")) { Text("完成", fontSize = 13.sp) }
         else Text(plan.status.label, fontSize = 12.sp, color = Muted, modifier = Modifier.padding(12.dp))
     }
 }

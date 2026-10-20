@@ -23,12 +23,19 @@ private val TaskColumns=linkedMapOf("date" to "安排时间","deadline" to "截�
     "project" to "项目","expected" to "预计","actual" to "实际","photos" to "照片","parent" to "父任务")
 private val SortColumns=TaskColumns.filterKeys { it in setOf("date","deadline","priority","domain","status") }
 
-@Composable internal fun TaskWorkspace(state: AppState,actions: AppActions,record:(LifeRecord)->Unit,edit:(Plan)->Unit,complete:(Plan)->Unit) {
+@Composable internal fun TaskWorkspace(state: AppState,actions: AppActions,record:(LifeRecord)->Unit,edit:(Plan)->Unit,complete:(Plan)->Unit,
+    requestedDate:String?=null,onDateHandled:()->Unit={}) {
     var table by rememberSaveable { mutableStateOf(false) }
+    var selectedDate by rememberSaveable { mutableStateOf(requestedDate ?: state.today) }
     var query by rememberSaveable { mutableStateOf("") }
     var view by rememberSaveable(stateSaver=Saver<SavedView,String>(save={ModelJson.view(it).toString()},restore={ModelJson.view(JSONObject(it))})) { mutableStateOf(SavedView("当前任务",scope="tasks")) }
+    LaunchedEffect(requestedDate) {requestedDate?.let {
+        selectedDate=it;table=false;query="";view=view.copy(domain=null,status="",thisWeek=false,query="")
+        onDateHandled()
+    }}
     var dialog by remember { mutableStateOf("") }
     var name by remember { mutableStateOf("") }
+    fun applyView(saved: SavedView) { view=saved;query=saved.query;table=saved.viewMode=="table" }
     val rows=TaskQuery.select(state.plans,view,query)
     val compact=LocalConfiguration.current.orientation==Configuration.ORIENTATION_LANDSCAPE
     Column(Modifier.fillMaxSize()) {
@@ -40,26 +47,21 @@ private val SortColumns=TaskColumns.filterKeys { it in setOf("date","deadline","
                     Spacer(Modifier.width(8.dp))
                     FilterChip(selected=table,onClick={table=true},label={Text("多维表格")})
                 }
-                TextButton(onClick={edit(Plan())}){Text("加计划")}
+                TextButton(onClick={edit(Plan(date=selectedDate))}){Text("加计划")}
             }
             if(!compact)ChoiceRow(listOf("日历","多维表格"),if(table)1 else 0){table=it==1}
             if(!compact && rows.any { it.reminderMinutes!=null } && !state.notificationsAllowed)
                 TextButton(onClick=actions::requestNotifications){Text("提醒未启用，开启系统通知",fontSize=12.sp)}
             if(!compact)OutlinedTextField(query,{query=it},Modifier.fillMaxWidth().padding(top=8.dp),singleLine=true,label={Text("搜索任务或项目")},shape=RoundedCornerShape(16.dp))
-            Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-                TextButton(onClick={dialog="filter"}){Text("筛选")};TextButton(onClick={dialog="sort"}){Text("排序 ${view.sorts.size}")}
-                TextButton(onClick={dialog="group"}){Text("分组")};if(table)TextButton(onClick={dialog="columns"}){Text("显示列")}
-                TextButton(onClick={name="";dialog="save"}){Text(if(compact)"视图" else "保存视图")}
+            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
+                val filtered=query.isNotBlank() || view.domain!=null || view.status.isNotBlank() || view.thisWeek
+                TextButton(onClick={dialog="view"}){Text(if(filtered)"视图 · 已筛选" else "视图")}
+                if(filtered)TextButton(onClick={query="";view=view.copy(domain=null,status="",thisWeek=false,query="")}){Text("清空筛选")}
                 if(compact && rows.any { it.reminderMinutes!=null } && !state.notificationsAllowed)
                     TextButton(onClick=actions::requestNotifications){Text("开启提醒")}
             }
-            if(!compact && state.views.any { it.scope=="tasks" })Row(Modifier.horizontalScroll(rememberScrollState())) {
-                state.views.filter { it.scope=="tasks" }.forEach { saved ->
-                    InputChip(selected=view==saved,onClick={view=saved},label={Text(saved.name)},modifier=Modifier.padding(end=6.dp))
-                }
-            }
         }
-        if(!table)CalendarPage(state.copy(plans=rows,records=state.records.filter { view.domain==null || it.domain==view.domain }),record,edit,complete,showTitle=false)
+        if(!table)CalendarPage(state.copy(plans=rows,records=state.records.filter { view.domain==null || it.domain==view.domain }),record,edit,complete,showTitle=false,selectedDate=selectedDate,onSelectDate={selectedDate=it})
         else {
             Text("${rows.size} 个任务 · ${view.sorts.joinToString(" → ") { SortColumns[it.removePrefix("-")].orEmpty() + if(it.startsWith("-"))"↓" else "↑" }}",
                 color=Muted,fontSize=12.sp,modifier=Modifier.padding(horizontal=24.dp,vertical=8.dp))
@@ -97,9 +99,26 @@ private val SortColumns=TaskColumns.filterKeys { it in setOf("date","deadline","
             }
         }
     }
-    if(dialog.isNotEmpty())AlertDialog(onDismissRequest={dialog=""},title={Text(when(dialog){"sort"->"多条件排序";"filter"->"筛选任务";"group"->"按字段分组";"columns"->"显示列";else->"保存任务视图"})},
+    if(dialog.isNotEmpty())AlertDialog(onDismissRequest={dialog=""},title={Text(when(dialog){"sort"->"多条件排序";"filter"->"筛选任务";"group"->"按字段分组";"columns"->"显示列";"view"->"视图";else->"保存任务视图"})},
         text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(8.dp)) {
             when(dialog) {
+                "view" -> {
+                    TextButton(onClick={dialog="filter"}){Text("筛选")}
+                    TextButton(onClick={dialog="sort"}){Text("排序 ${view.sorts.size}")}
+                    if(table) {
+                        TextButton(onClick={dialog="group"}){Text("分组")}
+                        TextButton(onClick={dialog="columns"}){Text("显示列")}
+                    }
+                    TextButton(onClick={name="";dialog="save"}){Text("保存视图")}
+                    if(state.views.any { it.scope=="tasks" }) {
+                        HorizontalDivider(color=Line)
+                        Text("已存视图",color=Muted,fontSize=12.sp)
+                        state.views.filter { it.scope=="tasks" }.forEach { saved -> Row {
+                            TextButton(onClick={applyView(saved);dialog=""},modifier=Modifier.weight(1f)){Text("使用：${saved.name}")}
+                            TextButton(onClick={actions.deleteView(saved.name)}){Text("删除")}
+                        } }
+                    }
+                }
                 "sort" -> {
                     view.sorts.forEachIndexed { index,key -> Row {
                         Text("${index+1}. ${SortColumns[key.removePrefix("-")]}",Modifier.weight(1f).padding(top=12.dp))
@@ -113,7 +132,7 @@ private val SortColumns=TaskColumns.filterKeys { it in setOf("date","deadline","
                     Text("未设置截止时间的任务排在最后。",fontSize=12.sp,color=Muted)
                 }
                 "filter" -> {
-                    if(compact)OutlinedTextField(query,{query=it},singleLine=true,label={Text("搜索任务或项目")})
+                    OutlinedTextField(query,{query=it},singleLine=true,label={Text("搜索任务或项目")})
                     Text("类型");ChoiceRow(listOf("全部")+Domain.entries.map { it.label },view.domain?.ordinal?.plus(1) ?: 0){view=view.copy(domain=if(it==0)null else Domain.entries[it-1])}
                     Text("状态");ChoiceRow(listOf("全部（不含归档）")+PlanStatus.entries.map { it.label },PlanStatus.entries.indexOfFirst { it.name==view.status }+1){view=view.copy(status=if(it==0)"" else PlanStatus.entries[it-1].name)}
                     ToggleRow("仅本周",view.thisWeek){view=view.copy(thisWeek=it)}
@@ -126,13 +145,10 @@ private val SortColumns=TaskColumns.filterKeys { it in setOf("date","deadline","
                     Checkbox(checked=key in view.columns,onCheckedChange={ checked -> view=view.copy(columns=if(checked)view.columns+key else view.columns-key) });Text(label,Modifier.padding(top=14.dp))
                 } }
                 "save" -> {
-                    if(compact)state.views.filter {it.scope=="tasks"}.forEach { saved ->
-                        TextButton(onClick={view=saved;dialog=""}) {Text("使用：${saved.name}")}
-                    }
                     OutlinedTextField(name,{name=it.take(40)},singleLine=true,label={Text("视图名称")})
                 }
             }
-        }},confirmButton={TextButton(onClick={if(dialog=="save" && name.isNotBlank())actions.saveView(view.copy(name=name.trim()));dialog=""},enabled=dialog!="save" || (name.isNotBlank() && state.views.none { it.scope!="tasks" && it.name==name.trim() })){Text(if(dialog=="save")"保存" else "完成")}})
+        }},confirmButton={TextButton(onClick={if(dialog=="save" && name.isNotBlank())actions.saveView(view.copy(name=name.trim(),query=query,viewMode=if(table)"table" else "calendar"));dialog=""},enabled=dialog!="save" || (name.isNotBlank() && state.views.none { it.scope!="tasks" && it.name==name.trim() })){Text(if(dialog=="save")"保存" else "完成")}})
 }
 
 @Composable private fun TaskCell(text: String,width: Int) { Text(text,Modifier.width(width.dp).padding(10.dp),fontSize=13.sp,maxLines=3) }

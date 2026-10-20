@@ -57,7 +57,7 @@ internal object ModelJson {
     fun view(value: SavedView) = JSONObject().apply {
         put("name", value.name); putNullable("domain", value.domain?.name); put("thisWeek", value.thisWeek)
         put("sorts",JSONArray(value.sorts)); put("groupBy",value.groupBy); put("status",value.status); put("columns",JSONArray(value.columns))
-        put("scope",value.scope)
+        put("scope",value.scope); put("query",value.query); put("viewMode",value.viewMode)
     }
 
     fun view(value: JSONObject) = SavedView(
@@ -67,7 +67,15 @@ internal object ModelJson {
         groupBy=value.optString("groupBy",""),status=value.optString("status",""),
         columns=value.optJSONArray("columns")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: listOf("date","deadline","priority","domain","status"),
         scope=value.optString("scope","records"),
+        query=value.optString("query",""),viewMode=value.optString("viewMode","calendar"),
     )
+
+    fun receipt(value: TaskReceipt) = JSONObject().put("id",value.id).put("createdIds",JSONArray(value.createdIds)).put("messageId",value.messageId ?: JSONObject.NULL)
+        .put("before",JSONArray().apply {value.before.forEach {put(plan(it))}})
+        .put("after",JSONArray().apply {value.after.forEach {put(plan(it))}})
+    fun receipt(value: JSONObject) = TaskReceipt(value.getString("id"),value.getJSONArray("createdIds").let { a ->
+        (0 until a.length()).map {a.getString(it)} },value.array("before").objects().map(::plan),value.array("after").objects().map(::plan),
+        value.optString("messageId").takeIf {it.isNotBlank() && it!="null"})
 
     fun message(value: ChatMessage) = JSONObject().apply {
         put("id", value.id); put("user", value.user); put("text", value.text)

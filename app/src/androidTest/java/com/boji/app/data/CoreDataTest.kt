@@ -68,4 +68,75 @@ class CoreDataTest {
         val raw=android.database.sqlite.SQLiteDatabase.openDatabase(context.getDatabasePath(name).path,null,android.database.sqlite.SQLiteDatabase.OPEN_READONLY)
         try { raw.rawQuery("SELECT payload FROM meta WHERE name='settings-draft'",null).use {it.moveToFirst();assertFalse(it.getString(0).contains("TEST_ONLY_PRIVATE_DRAFT"))} } finally {raw.close()}
     }
+
+    @Test fun agentTasksAreIdempotentAndUndoSurvivesRestartWithoutTouchingOtherData() {
+        val existing=Plan(title="原有任务");store.savePlan(existing)
+        val task=Plan(title="明晚练胸",domain=Domain.TRAINING,time="20:00",reminderMinutes=10)
+        val first=store.writeAgentTasks("run-1",creates=listOf(task)).single()
+        val repeated=store.writeAgentTasks("run-1",creates=listOf(task.copy(id="another-id"))).single()
+        assertEquals(first.id,repeated.id);assertEquals(2,store.snapshot().plans.size)
+        val moved=task.copy(time="21:00",priority=0)
+        store.writeAgentTasks("run-1",changes=listOf(task to moved))
+        assertEquals(listOf(task.id),store.snapshot().taskReceipt!!.createdIds)
+        store.close();store=BojiStore(context,name)
+        store.undoAgentTasks()
+        assertEquals(listOf(existing),store.snapshot().plans);assertNull(store.snapshot().taskReceipt)
+    }
+
+    @Test fun agentTaskUpdateRestoresOriginalAndUndoRejectsLaterManualChanges() {
+        val original=Plan(title="学习",time="19:00");store.savePlan(original)
+        val updated=original.copy(time="20:00",priority=1)
+        store.writeAgentTasks("update-1",changes=listOf(original to updated))
+        store.undoAgentTasks();assertEquals(original,store.snapshot().plans.single())
+        store.writeAgentTasks("update-2",changes=listOf(original to updated))
+        val manual=updated.copy(title="手动新标题");store.savePlan(manual)
+        assertTrue(runCatching {store.undoAgentTasks()}.isFailure)
+        assertEquals(manual,store.snapshot().plans.single())
+    }
+
+    @Test fun invalidAgentBatchWritesNothingAndRecordPreventsUndoOfCreatedTask() {
+        val valid=Plan(title="有效任务")
+        assertTrue(runCatching {store.writeAgentTasks("bad",creates=listOf(valid,Plan(title="坏任务",time="27:00")))}.isFailure)
+        assertTrue(store.snapshot().plans.isEmpty());assertNull(store.snapshot().taskReceipt)
+        store.writeAgentTasks("good",creates=listOf(valid))
+        store.saveRecord(LifeRecord(domain=valid.domain,title="学习记录",minutes=20,planId=valid.id))
+        assertTrue(runCatching {store.undoAgentTasks()}.isFailure)
+        assertEquals(1,store.snapshot().records.size);assertEquals(PlanStatus.DONE,store.snapshot().plans.single().status)
+    }
+
+    @Test fun similarTaskDoesNotSilentlyDropNewRequirementsAndNoopCannotUndoOlderRequest() {
+        val task=Plan(title="练胸",time="20:00",expectedMinutes=40,reminderMinutes=10)
+        store.writeAgentTasks("first",creates=listOf(task))
+        assertTrue(runCatching {store.writeAgentTasks("conflict",creates=listOf(task.copy(id="new",expectedMinutes=60)))}.isFailure)
+        assertEquals(task,store.snapshot().plans.single())
+        val reused=store.writeAgentTasks("retry",creates=listOf(task.copy(id="retry-id"))).single()
+        assertEquals(task.id,reused.id);assertNull(store.snapshot().taskReceipt)
+        assertTrue(runCatching {store.undoAgentTasks()}.isFailure)
+        assertEquals(task,store.snapshot().plans.single())
+    }
+
+    @Test fun childFirstBatchResolvesAnExistingParentBeforeDeduplication() {
+        val parent=Plan(title="期末英语");store.savePlan(parent)
+        val proposedParent=parent.copy(id="new-parent")
+        val child=Plan(title="背单词",parentId=proposedParent.id)
+        val result=store.writeAgentTasks("family",creates=listOf(child,proposedParent))
+        assertEquals(parent.id,result[1].id)
+        assertEquals(parent.id,store.snapshot().plans.single {it.id==child.id}.parentId)
+        store.undoAgentTasks();assertEquals(listOf(parent),store.snapshot().plans)
+    }
+
+    @Test fun confirmationReceiptIsAtomicAndTaskReceiptKeepsItsConversationAnchor() {
+        val record=LifeRecord(title="练胸",count=8)
+        val batch=DraftBatch(records=listOf(record))
+        assertTrue(runCatching {store.applyDraftWithMessage(batch,ChatMessage(user=false,text=""))}.isFailure)
+        assertTrue(store.snapshot().records.isEmpty())
+        val message=ChatMessage(user=false,text="已记录练胸，8次")
+        store.applyDraftWithMessage(batch,message);store.applyDraftWithMessage(batch,message)
+        assertEquals(1,store.snapshot().records.size);assertEquals(listOf(message),store.snapshot().messages)
+        val task=Plan(title="复习")
+        store.writeAgentTasks("anchored",creates=listOf(task));store.attachTaskReceipt(message.id)
+        store.close();store=BojiStore(context,name)
+        assertEquals(message.id,store.snapshot().taskReceipt!!.messageId)
+        store.undoAgentTasks();assertTrue(store.snapshot().plans.isEmpty());assertEquals(1,store.snapshot().records.size)
+    }
 }

@@ -11,10 +11,10 @@ const emptyUsage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, to
 const domain = Type.Union(['TRAINING', 'FINANCE', 'LEARNING', 'SLEEP', 'PROJECT', 'OTHER'].map(v => Type.Literal(v)));
 const title = Type.String({ minLength: 1, maxLength: 80 });
 const date = Type.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}$' });
-const record = Type.Object({ domain, title, date, minutes: Type.Integer({ minimum: 0, maximum: 1440 }),
-  amountFen: Type.Integer({ minimum: 0, maximum: 999999999999 }),
-  moneyKind: Type.Union(['EXPENSE','INCOME','TRANSFER','REFUND'].map(v => Type.Literal(v))),
-  category: Type.String({ maxLength: 40 }), count: Type.Optional(Type.Integer({minimum:0,maximum:100000})),
+const record = Type.Object({ domain, title, date, minutes: Type.Optional(Type.Integer({ minimum: 0, maximum: 1440 })),
+  amountFen: Type.Optional(Type.Integer({ minimum: 0, maximum: 999999999999 })),
+  moneyKind: Type.Optional(Type.Union(['EXPENSE','INCOME','TRANSFER','REFUND'].map(v => Type.Literal(v)))),
+  category: Type.Optional(Type.String({ maxLength: 40 })), count: Type.Optional(Type.Integer({minimum:0,maximum:100000})),
   countUnit: Type.Optional(Type.Union(['次','组','个','页','题'].map(v=>Type.Literal(v)))),
   planId: Type.Optional(Type.String({maxLength:128})), note: Type.Optional(Type.String({maxLength:2000})), completesPlan: Type.Optional(Type.Boolean()) }, { additionalProperties: false });
 const plan = Type.Object({ domain, title, date, time: Type.String({ maxLength: 5 }),
@@ -22,6 +22,15 @@ const plan = Type.Object({ domain, title, date, time: Type.String({ maxLength: 5
   parentId: Type.Optional(Type.String({maxLength:128})), priority: Type.Optional(Type.Integer({minimum:0,maximum:3})),
   deadline: Type.Optional(Type.String({maxLength:19})), project: Type.Optional(Type.String({maxLength:100})),
   reminderMinutes: Type.Optional(Type.Integer({minimum:0,maximum:10080})) }, { additionalProperties: false });
+const task = Type.Object({...plan.properties,
+  time:Type.Optional(plan.properties.time), expectedMinutes:Type.Optional(plan.properties.expectedMinutes)}, {additionalProperties:false});
+const change = Type.Object({id:Type.String({minLength:1,maxLength:128}),
+  title:Type.Optional(title), date:Type.Optional(date), time:Type.Optional(Type.String({maxLength:5})),
+  expectedMinutes:Type.Optional(Type.Integer({minimum:0,maximum:1440})),
+  priority:Type.Optional(Type.Integer({minimum:0,maximum:3})),deadline:Type.Optional(Type.String({maxLength:19})),
+  project:Type.Optional(Type.String({maxLength:100})),
+  status:Type.Optional(Type.Union(['TODO','IN_PROGRESS','SKIPPED','ARCHIVED'].map(v=>Type.Literal(v)))),
+  reminderMinutes:Type.Optional(Type.Union([Type.Integer({minimum:0,maximum:10080}),Type.Null()]))}, {additionalProperties:false});
 
 export const toolSchemas = [
   { name: 'read', description: 'Read a listed SKILL.md or a bundled skill reference. Paths are virtual, read-only.',
@@ -30,9 +39,13 @@ export const toolSchemas = [
     parameters: Type.Object({ query: Type.Optional(Type.String({ maxLength: 100 })), domain: Type.Optional(domain),
       from: Type.Optional(date), to: Type.Optional(date) }, { additionalProperties: false }) },
   { name: 'list_plans', description: 'Read local plans and goals, within granted permissions.',
-    parameters: Type.Object({ from: Type.Optional(date), to: Type.Optional(date) }, { additionalProperties: false }) },
-  { name: 'memory_read', description: 'Read the user-managed persistent preferences. Requires history permission.',
+    parameters: Type.Object({ from: Type.Optional(date), to: Type.Optional(date),query:Type.Optional(Type.String({maxLength:100})) }, { additionalProperties: false }) },
+  { name: 'memory_read', description: 'Read persistent preferences within the independent memory permission.',
     parameters: Type.Object({}, { additionalProperties: false }) },
+  {name:'create_tasks',description:'Create tasks directly when the user explicitly asks to arrange them. Dates must be clear; omit unknown time/duration. Saves atomically and returns actual IDs. Exact duplicates are reused. Users can undo.',
+    parameters:Type.Object({tasks:Type.Array(task,{minItems:1,maxItems:180})},{additionalProperties:false})},
+  {name:'update_tasks',description:'Update only explicitly requested existing tasks by their real IDs from list_plans. Omitted fields stay unchanged. No deletions or invented completion records. Saves atomically with undo.',
+    parameters:Type.Object({changes:Type.Array(change,{minItems:1,maxItems:180})},{additionalProperties:false})},
   { name: 'propose_draft', description: 'Stage records/plans for user review. This never saves actual records. Call once with the whole proposal.',
     parameters: Type.Object({ records: Type.Array(record, { maxItems: 20 }), plans: Type.Array(plan, { maxItems: 180 }),
       memories: Type.Optional(Type.Array(Type.Object({text:Type.String({minLength:1,maxLength:1000})},{additionalProperties:false}),{maxItems:20})) }, { additionalProperties: false }) }
@@ -65,7 +78,7 @@ export async function run(input: any, host: Host, signal?: AbortSignal) {
     baseUrl: '', reasoning: false, input: ['text','image'], contextWindow: 32000, maxTokens: 4096, cost: emptyUsage().cost };
   const agent = new Agent({
     initialState: { model, systemPrompt: input.system + formatSkillsForPrompt(skills.skills),
-      tools: toolSchemas.map(spec => ({ ...spec, label: spec.name, execute: async (_id: string, args: any) => {
+      tools: toolSchemas.filter(spec => !input.allowedTools || input.allowedTools.includes(spec.name)).map(spec => ({ ...spec, label: spec.name, execute: async (_id: string, args: any) => {
         if (++calls > 24) throw Error('工具调用达到上限');
         let output: any;
         if (spec.name === 'read') {
