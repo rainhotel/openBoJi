@@ -11,55 +11,63 @@ TAP version 13
 # Subtest: real Pi loop loads upstream Skill, reads scoped native records and stages without saving
 ok 1 - real Pi loop loads upstream Skill, reads scoped native records and stages without saving
   ---
-  duration_ms: 33.7986
+  duration_ms: 34.9073
   type: 'test'
   ...
 # Subtest: upstream schema validation rejects malformed amounts before native tools execute
 ok 2 - upstream schema validation rejects malformed amounts before native tools execute
   ---
-  duration_ms: 6.0893
+  duration_ms: 8.5478
   type: 'test'
   ...
 # Subtest: unknown tools and skill path traversal return tool errors without accessing native resources
 ok 3 - unknown tools and skill path traversal return tool errors without accessing native resources
   ---
-  duration_ms: 8.2401
+  duration_ms: 9.7585
   type: 'test'
   ...
 # Subtest: bounded loop stops a provider that keeps asking for tools
 ok 4 - bounded loop stops a provider that keeps asking for tools
   ---
-  duration_ms: 7.7078
+  duration_ms: 9.2809
   type: 'test'
   ...
 # Subtest: skill parser is reused, validates metadata and restores existing skill snapshot
 ok 5 - skill parser is reused, validates metadata and restores existing skill snapshot
   ---
-  duration_ms: 3.3229
+  duration_ms: 3.6227
   type: 'test'
   ...
 # Subtest: Pi session can be restored with paired tool history and strips images from persistence
 ok 6 - Pi session can be restored with paired tool history and strips images from persistence
   ---
-  duration_ms: 5.0173
+  duration_ms: 5.8665
   type: 'test'
   ...
 # Subtest: cancellation prevents late provider response from executing tools
 ok 7 - cancellation prevents late provider response from executing tools
   ---
-  duration_ms: 3.5857
+  duration_ms: 4.4511
   type: 'test'
   ...
-1..7
-# tests 7
+# Subtest: DeepSeek thinking is retained across consecutive tool calls
+ok 8 - DeepSeek thinking is retained across consecutive tool calls
+  ---
+  duration_ms: 5.4963
+  type: 'test'
+  ...
+1..8
+# tests 8
 # suites 0
-# pass 7
+# pass 8
 # fail 0
 # cancelled 0
 # skipped 0
 # todo 0
-# duration_ms 162.2926
-Picked up JAVA_TOOL_OPTIONS: -Djdk.net.unixdomain.tmpdir=D:/moniC/project/boji/.gradle/tcp-fallback-ceff55d48b4e46ceb678398d88e884db
+# duration_ms 180.8
+Picked up JAVA_TOOL_OPTIONS: -Djdk.net.unixdomain.tmpdir=D:/moniC/project/boji/.gradle/tcp-fallback-c96c1e69f08d4b1e8514178d1d4de699
+To honour the JVM settings for this build a single-use Daemon process will be forked. For more on this, please refer to https://docs.gradle.org/8.13/userguide/gradle_daemon.html#sec:disabling_the_daemon in the Gradle documentation.
+Daemon will be stopped at the end of the build
 > Task :app:preBuild UP-TO-DATE
 > Task :app:preDebugBuild UP-TO-DATE
 > Task :app:mergeDebugNativeDebugMetadata NO-SOURCE
@@ -123,8 +131,8 @@ Picked up JAVA_TOOL_OPTIONS: -Djdk.net.unixdomain.tmpdir=D:/moniC/project/boji/.
 > Task :app:writeDebugAndroidTestSigningConfigVersions UP-TO-DATE
 
 > Task :app:compileDebugKotlin
-w: file:///D:/moniC/project/boji/app/src/main/java/com/boji/app/ui/BojiApp.kt:502:92 'fun quadraticBezierTo(x1: Float, y1: Float, x2: Float, y2: Float): Unit' is deprecated. Use quadraticTo() for consistency with cubicTo().
-w: file:///D:/moniC/project/boji/app/src/main/java/com/boji/app/ui/BojiApp.kt:502:155 'fun quadraticBezierTo(x1: Float, y1: Float, x2: Float, y2: Float): Unit' is deprecated. Use quadraticTo() for consistency with cubicTo().
+w: file:///D:/moniC/project/boji/app/src/main/java/com/boji/app/ui/BojiApp.kt:537:92 'fun quadraticBezierTo(x1: Float, y1: Float, x2: Float, y2: Float): Unit' is deprecated. Use quadraticTo() for consistency with cubicTo().
+w: file:///D:/moniC/project/boji/app/src/main/java/com/boji/app/ui/BojiApp.kt:537:155 'fun quadraticBezierTo(x1: Float, y1: Float, x2: Float, y2: Float): Unit' is deprecated. Use quadraticTo() for consistency with cubicTo().
 
 > Task :app:compileDebugJavaWithJavac UP-TO-DATE
 > Task :app:dexBuilderDebug
@@ -133,9 +141,6 @@ w: file:///D:/moniC/project/boji/app/src/main/java/com/boji/app/ui/BojiApp.kt:50
 > Task :app:mergeDebugJavaResource UP-TO-DATE
 > Task :app:generateDebugLintReportModel
 > Task :app:mergeProjectDexDebug
-> Task :app:packageDebug
-> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
-> Task :app:assembleDebug
 > Task :app:bundleDebugClassesToRuntimeJar
 > Task :app:bundleDebugClassesToCompileJar
 > Task :app:generateDebugAndroidTestLintModel
@@ -145,9 +150,11 @@ w: file:///D:/moniC/project/boji/app/src/main/java/com/boji/app/ui/BojiApp.kt:50
 > Task :app:processDebugUnitTestJavaRes UP-TO-DATE
 
 > Task :app:testDebugUnitTest
-Picked up JAVA_TOOL_OPTIONS: -Djdk.net.unixdomain.tmpdir=D:/moniC/project/boji/.gradle/tcp-fallback-ceff55d48b4e46ceb678398d88e884db
+Picked up JAVA_TOOL_OPTIONS: -Djdk.net.unixdomain.tmpdir=D:/moniC/project/boji/.gradle/tcp-fallback-c96c1e69f08d4b1e8514178d1d4de699
 
-> Task :app:lintAnalyzeDebugAndroidTest
+> Task :app:packageDebug
+> Task :app:createDebugApkListingFileRedirect UP-TO-DATE
+> Task :app:assembleDebug
 > Task :app:compileDebugAndroidTestKotlin
 > Task :app:compileDebugAndroidTestJavaWithJavac UP-TO-DATE
 > Task :app:dexBuilderDebugAndroidTest
@@ -159,6 +166,7 @@ Picked up JAVA_TOOL_OPTIONS: -Djdk.net.unixdomain.tmpdir=D:/moniC/project/boji/.
 > Task :app:createDebugAndroidTestApkListingFileRedirect UP-TO-DATE
 > Task :app:assembleDebugAndroidTest
 > Task :app:lintAnalyzeDebugUnitTest
+> Task :app:lintAnalyzeDebugAndroidTest
 > Task :app:lintAnalyzeDebug
 
 > Task :app:lintReportDebug
@@ -166,6 +174,6 @@ Wrote HTML report to file:///D:/moniC/project/boji/app/build/reports/lint-result
 
 > Task :app:lintDebug
 
-BUILD SUCCESSFUL in 29s
+BUILD SUCCESSFUL in 1m 26s
 80 actionable tasks: 20 executed, 60 up-to-date
 D:\moniC\project\boji\artifacts\boji-debug.apk

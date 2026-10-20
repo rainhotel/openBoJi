@@ -1,6 +1,6 @@
 # 薄肌 · 产品设计
 
-当前版本：[v0.2 日历、打卡、计划与多维表格](./product-design-v0.2/README.md)。
+当前实现口径：[核心场景与多维任务设计](./core-experience-v0.2.md)。早期原型：[v0.2 日历、打卡、计划与多维表格](./product-design-v0.2/README.md)。
 
 已确认方向：Android 优先、本地保存、按需云端 AI、简洁对话风格。首版已实现，安装与验证见 [验收记录](./implementation-status.md)。
 

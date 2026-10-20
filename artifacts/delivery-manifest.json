@@ -1,27 +1,44 @@
 {
-  "generatedAt": "2026-10-19T00:22:29.334174+08:00",
+  "generatedAt": "2026-10-20T10:08:37.415682+08:00",
+  "sourceCommit": "b8a93f00066f28c6e40ed37ba33342836e818ab5",
+  "versionName": "0.2.0",
+  "versionCode": 2,
+  "minSdk": 26,
+  "targetSdk": 36,
   "apk": "boji-debug.apk",
-  "apkBytes": 10909099,
-  "apkSha256": "ad857db9b4249689d9917a9feccca53abd01aae42dae619ed4806cc8cd73f22b",
+  "apkBytes": 10872359,
+  "apkSha256": "9d0df2530ff6ed58b4937295e12eb3a537a817a6c3bad08d2d9c04c738fb0cdd",
+  "installedApkSha256": "9d0df2530ff6ed58b4937295e12eb3a537a817a6c3bad08d2d9c04c738fb0cdd",
   "piVersion": "1.3.0",
-  "agentBundleBytes": 319867,
-  "agentBundleSha256": "7060553cefd0272d110f48fe81a9c4b435b11c4791abdcaa7bb1971ec6624cd2",
+  "agentBundleBytes": 320851,
+  "agentBundleSha256": "5ee3e7285d86017346c1f241b1f182d8298b9a0f57df98e727c3aea462f41426",
   "checks": {
     "js": {
-      "passed": 7,
+      "passed": 8,
       "failed": 0
     },
     "jvm": {
-      "passed": 16,
-      "failed": 0
+      "passed": 25,
+      "failed": 0,
+      "skipped": 0
     },
     "android36Emulator": {
-      "passed": 17,
+      "passed": 29,
       "failed": 0
     },
     "lintErrors": 0,
-    "lintWarnings": 4
+    "lintWarnings": 8
   },
   "cloudProviderLiveTest": false,
-  "userPhysicalDeviceTest": false
+  "userPhysicalDeviceTest": false,
+  "scenarioEvidence": {
+    "01-today.png": "cd82bd4c89fc473ee3d56e85a13ddc955945a8b74e52636aa1c3d05c3f8aeb11",
+    "02-assistant-draft.png": "29dd252e27922a626691dbcb558ce53072ead08dbafb49036b7c66e508915a16",
+    "03-space-table.png": "4a087cdaca73d0b015d0d77ed395956a8e846e008fd957952a9ae6bdfad4491f",
+    "04-calendar.png": "a4dd9e2de7784d8c1a0001ce2915a7888005c0a731709cd80c6ccd191db1aa33",
+    "05-task-actual.png": "b456c519a1f5f5421e6584f85b92d136ce2416fd97f8851fc363610d574439f8",
+    "06-task-landscape.png": "378862034e87c96a857e697f84c916fa0fb54aa6faf2bc6cbb1a42ff1c812035",
+    "07-settings-keyboard.png": "94b33dfdcda1da4ccf9a17de2568f3e15350c0ddeed134d920a587c015691146",
+    "08-memory.png": "cb5f4e5823cac5afa0a347e9155e11917039b3d61f5ca612269319d440843b9f"
+  }
 }

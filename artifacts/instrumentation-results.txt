@@ -1,9 +1,12 @@
-﻿
+
 com.boji.app.BackupFlowTest:.
+com.boji.app.CoreUserFlowTest:....
 com.boji.app.MainFlowTest:..
-com.boji.app.assistant.PiAssistantTest:....
+com.boji.app.NotificationDeliveryTest:.
+com.boji.app.assistant.PiAssistantTest:......
 com.boji.app.data.BojiStoreTest:..........
+com.boji.app.data.CoreDataTest:.....
 
-Time: 22.657
+Time: 70.749
 
-OK (17 tests)
+OK (29 tests)
