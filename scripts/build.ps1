@@ -38,7 +38,7 @@ try {
     } finally { Pop-Location }
     $tasks = @(':app:assembleDebug')
     if ($Verify) { $tasks += @(':app:testDebugUnitTest', ':app:lintDebug', ':app:assembleDebugAndroidTest') }
-    & .\gradlew.bat @tasks --console plain
+    & .\gradlew.bat @tasks --no-daemon --console plain
     if ($LASTEXITCODE -ne 0) { throw 'Gradle build failed.' }
     New-Item -ItemType Directory -Force -Path 'artifacts' | Out-Null
     Copy-Item -LiteralPath 'app\build\outputs\apk\debug\app-debug.apk' -Destination 'artifacts\boji-debug.apk'

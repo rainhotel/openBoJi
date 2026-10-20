@@ -91,3 +91,18 @@ test('cancellation prevents late provider response from executing tools',async()
   },controller.signal);
   assert.equal(result.success,false); assert.equal(executed,0);
 });
+
+test('DeepSeek thinking is retained across consecutive tool calls',async()=>{
+  let turn=0, replay;
+  const response=toolResponse('memory_read',{});
+  response.choices[0].message.reasoning_content='REQUIRED_REASONING';
+  const result=await runtime().run({...input,thinking:true},async(method,args)=>{
+    if(method!=='model')return {};
+    if(++turn===1)return response;
+    replay=args;return answer('已读取');
+  });
+  assert.equal(result.success,true);
+  assert.equal(replay.messages.find(m=>m.role==='assistant').reasoning_content,'REQUIRED_REASONING');
+  assert.equal(typeof replay.messages.find(m=>m.role==='assistant').content,'string');
+  assert.equal(replay.thinking.type,'enabled');
+});

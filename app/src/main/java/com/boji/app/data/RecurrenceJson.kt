@@ -24,6 +24,11 @@ internal object RecurrenceJson {
                 date=rule.getString("date"),time=rule.getString("time"),expectedMinutes=minutes.toString().toInt(),
                 goalId=rule.optString("goalId").takeIf { it.isNotBlank() && it != "null" },seriesId=id)
             DataValidation.plan(plan)
+            rule.optJSONObject("template")?.let { raw ->
+                val template=ModelJson.plan(raw);DataValidation.plan(template)
+                require(template.title==plan.title && template.domain==plan.domain && template.date==plan.date && template.time==plan.time &&
+                    template.expectedMinutes==plan.expectedMinutes && template.goalId==plan.goalId && template.parentId==null) { "重复任务模板不一致" }
+            }
             require(plan.goalId == null || goals.any { it.id == plan.goalId && it.domain == plan.domain }) { "重复规则关联目标不存在" }
             val days = rule.getJSONArray("days")
             require(days.length() in 1..7) { "重复规则请选择星期" }

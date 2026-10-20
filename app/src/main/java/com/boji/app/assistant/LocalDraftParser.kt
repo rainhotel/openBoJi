@@ -14,7 +14,8 @@ import java.time.LocalTime
 
 /** Deliberately small offline grammar: explicit quantities only, no probabilistic inference. */
 internal object LocalDraftParser {
-    private val training = Regex("练拳|拳击|搏击|跑步|健身|训练|运动|游泳|骑行|骑车|跳绳|俯卧撑|瑜伽|走路|散步")
+    private val training = Regex("练胸|练背|练腿|练肩|卧推|深蹲|练拳|拳击|搏击|跑步|健身|训练|运动|游泳|骑行|骑车|跳绳|俯卧撑|瑜伽|走路|散步")
+    private val quantity=Regex("([0-9]+|[一二两三四五六七八九十百]+)(次|组|个|页|题)")
     private val learning = Regex("学习|学(?=[A-Za-z\\p{IsHan}])|读书|看书|阅读|写代码|刷题|复习|背单词|研究")
     private val finance = Regex("花了|花费|支出|消费|购买|买|付款|晚饭|午饭|早饭|早餐|午餐|晚餐|工资|收入|到账|收款|收到|退款|退了|返还|转账|转了|转给")
     private val amount = Regex("(?<![-\\d.])([0-9]{1,10}(?:\\.[0-9]{1,2})?)(?:元|块钱?)")
@@ -23,6 +24,11 @@ internal object LocalDraftParser {
     private val time = Regex("(?<![0-9])([0-2][0-9]:[0-5][0-9])(?![0-9])")
 
     fun reply(text: String, state: AppState, today: LocalDate): AssistantReply {
+        Regex("^(?:请)?记住[：:，, ]*(.+)",RegexOption.DOT_MATCHES_ALL).matchEntire(text.trim())?.let {
+            val value=it.groupValues[1].trim()
+            if(value.isNotBlank() && value.length<=1000)return AssistantReply("已整理为记忆草稿，确认后会长期保留。",
+                DraftBatch(memories=listOf(com.boji.app.model.MemoryEntry(text=value))))
+        }
         if (Regex("统计|总结|查看|多少|复盘").containsMatchIn(text) && !Regex("记一|记录|记下").containsMatchIn(text)) {
             return summary(text, state, today)
         }
@@ -61,6 +67,10 @@ internal object LocalDraftParser {
             val durations = duration.findAll(clause).toList()
             require(durations.size <= 1)
             val minutes = durations.singleOrNull()?.let { minutes(it) } ?: 0
+            val quantities=quantity.findAll(clause).toList();require(quantities.size<=1)
+            val quantityMatch=quantities.singleOrNull()
+            val count=quantityMatch?.groupValues?.get(1)?.let { it.toIntOrNull() ?: chineseNumber(it) } ?: 0
+            val unit=quantityMatch?.groupValues?.get(2) ?: "次"
             require(minutes in 0..1440)
             val amounts = amount.findAll(clause).toList()
             require(amounts.size <= 1)
@@ -78,7 +88,7 @@ internal object LocalDraftParser {
                 require(domain != Domain.FINANCE)
                 plans += Plan(title = title, domain = domain, date = date.toString(), time = clockTime, expectedMinutes = minutes)
             } else {
-                require(if (domain == Domain.FINANCE) fen > 0 && minutes == 0 else minutes > 0 && fen == 0L)
+                require(if (domain == Domain.FINANCE) fen > 0 && minutes == 0 else (minutes > 0 || count > 0) && fen == 0L)
                 val kind = when {
                     Regex("退款|退了|返还").containsMatchIn(clause) -> MoneyKind.REFUND
                     Regex("转账|转了|转给").containsMatchIn(clause) -> MoneyKind.TRANSFER
@@ -87,7 +97,7 @@ internal object LocalDraftParser {
                 }
                 records += LifeRecord(title = title, domain = domain, date = date.toString(), minutes = minutes,
                     amountFen = fen, moneyKind = kind, category = if (domain == Domain.FINANCE) "其他" else "",
-                    source = "本地整理")
+                    source = "本地整理",count=count,countUnit=unit)
             }
         }
         DraftBatch(records = records, plans = plans)
@@ -134,9 +144,9 @@ internal object LocalDraftParser {
 
     private fun title(clause: String): String = clause.replace(absoluteDate, "").replace(time, "")
         .replace(Regex("今天|今日|今晚|昨天|昨日|昨晚|前天|明天|明日|明晚|后天"), "")
-        .replace(duration, "").replace(amount, "")
+        .replace(duration, "").replace(amount, "").replace(quantity,"")
         .replace(Regex("^(请|帮我|我|记录一下|记录|记一下|记下|安排|计划|提醒我|待办|打算|准备|想要)+"), "")
-        .replace(Regex("[：: ]+"), " ").trim().trimEnd('了').trim().take(80)
+        .replace(Regex("[：: ]+"), " ").trim().replace(Regex("(?:做了|练了|完成了)$"),"").trimEnd('了').trim().take(80)
 
     private fun summary(text: String, state: AppState, today: LocalDate): AssistantReply {
         if (!state.settings.includeHistory) return AssistantReply("本地摘要未开启，可在模型设置中允许后再查看汇总。")

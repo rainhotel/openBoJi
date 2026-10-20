@@ -95,7 +95,9 @@ internal fun interface AssistantTransport {
 internal class AssistantFailure(val safeMessage: String) : IOException()
 
 internal class UrlConnectionTransport : AssistantTransport {
-    override suspend fun post(endpoint: String, apiKey: String, body: String): String = suspendCancellableCoroutine { continuation ->
+    override suspend fun post(endpoint: String, apiKey: String, body: String): String = call(endpoint,apiKey,body)
+    suspend fun get(endpoint: String, apiKey: String): String = call(endpoint,apiKey,null)
+    private suspend fun call(endpoint: String, apiKey: String, body: String?): String = suspendCancellableCoroutine { continuation ->
         val connection = URL(endpoint).openConnection() as HttpURLConnection
         val job = CoroutineScope(Dispatchers.IO).launch {
             try {
@@ -108,24 +110,25 @@ internal class UrlConnectionTransport : AssistantTransport {
         continuation.invokeOnCancellation { job.cancel(); connection.disconnect() }
     }
 
-    private suspend fun request(connection: HttpURLConnection, apiKey: String, body: String): String {
+    private suspend fun request(connection: HttpURLConnection, apiKey: String, body: String?): String {
         try {
-            connection.requestMethod = "POST"
+            connection.requestMethod = if(body == null) "GET" else "POST"
             connection.connectTimeout = 15_000
             connection.readTimeout = 45_000
             connection.instanceFollowRedirects = false
-            connection.doOutput = true
+            connection.doOutput = body != null
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
             connection.setRequestProperty("Accept", "application/json")
             connection.setRequestProperty("Authorization", "Bearer $apiKey")
-            val bytes = body.toByteArray(Charsets.UTF_8)
-            connection.setFixedLengthStreamingMode(bytes.size)
+            val bytes = body?.toByteArray(Charsets.UTF_8)
+            if(bytes != null) connection.setFixedLengthStreamingMode(bytes.size)
             currentCoroutineContext().ensureActive()
-            connection.outputStream.use { it.write(bytes) }
+            if(bytes != null) connection.outputStream.use { it.write(bytes) }
             currentCoroutineContext().ensureActive()
             when (connection.responseCode) {
                 in 200..299 -> Unit
                 401, 403 -> throw AssistantFailure("模型认证失败，请检查密钥和权限。")
+                402 -> throw AssistantFailure("DeepSeek 账户余额不足，请在开放平台充值后重试。")
                 429 -> throw AssistantFailure("模型请求过多或额度不足，请稍后重试。")
                 in 300..399 -> throw AssistantFailure("模型地址发生跳转，请填写最终 HTTPS 地址。")
                 else -> throw AssistantFailure("模型暂时无法响应，请检查模型名称后重试。")

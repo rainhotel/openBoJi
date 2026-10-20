@@ -33,6 +33,9 @@ internal object DataValidation {
         id(value.id); text(value.title, "记录名称", 120, true); date(value.date)
         require(value.minutes in 0..1440) { "时长应在 0 到 1440 分钟之间" }
         require(value.amountFen in 0..MAX_MONEY_FEN) { "金额超出范围" }
+        require(value.count in 0..100000 && value.countUnit in setOf("次","组","个","页","题")) { "数量或单位无效" }
+        require(value.attachments.size <= 12 && value.attachments.distinct().size == value.attachments.size &&
+            value.attachments.all { it.matches(Regex("[a-zA-Z0-9-]+\\.jpg")) }) { "附件名称或数量无效" }
         if (value.domain == Domain.FINANCE) {
             require(value.amountFen > 0 && value.minutes == 0 && value.goalId == null) { "收支需填写正金额，且不能计入训练或学习目标" }
         } else {
@@ -51,6 +54,12 @@ internal object DataValidation {
             "时间格式应为 HH:mm"
         }
         value.goalId?.let(::id); value.seriesId?.let(::id)
+        require(value.priority in 0..3) { "优先级应为 P0 到 P3" }
+        text(value.project,"项目",100)
+        if(value.deadline.isNotBlank()) require(runCatching { java.time.LocalDateTime.parse(value.deadline) }.isSuccess ||
+            runCatching { LocalDate.parse(value.deadline) }.isSuccess) { "截止日期格式不正确" }
+        value.parentId?.let { id(it); require(it != value.id) { "任务不能关联自身" } }
+        require(value.reminderMinutes == null || (value.reminderMinutes in 0..10080 && value.time.isNotEmpty())) { "提醒需有明确时间" }
         require(value.domain != Domain.FINANCE || value.goalId == null) { "收支计划不能关联训练或学习目标" }
     }
 
@@ -63,7 +72,20 @@ internal object DataValidation {
         require(value.minimumMinutes in 0..1440) { "最低时长应在 0 到 1440 分钟之间" }
     }
 
-    fun view(value: SavedView) { text(value.name, "视图名称", 40, true) }
+    fun view(value: SavedView) {
+        text(value.name, "视图名称", 40, true)
+        require(value.scope in setOf("records","tasks")) { "视图类型无效" }
+        require(value.sorts.size in 1..5 && value.sorts.distinct().size == value.sorts.size &&
+            value.sorts.all { it.removePrefix("-") in setOf("deadline","priority","domain","status","date") }) { "排序条件无效" }
+        require(value.groupBy in setOf("","domain","status","priority","project")) { "分组无效" }
+        require(value.status.isEmpty() || PlanStatus.entries.any { it.name == value.status }) { "状态无效" }
+        require(value.columns.size <= 10 && value.columns.distinct().size == value.columns.size &&
+            value.columns.all { it in setOf("date","deadline","priority","domain","status","project","expected","actual","photos","parent") }) { "显示列无效" }
+    }
+    fun memory(value: MemoryEntry) {
+        id(value.id); text(value.text,"记忆",1000,true); text(value.source,"记忆来源",60,true)
+        require(runCatching { LocalDateTime.parse(value.updatedAt) }.isSuccess) { "记忆更新时间无效" }
+    }
 
     fun message(value: ChatMessage) { id(value.id); text(value.text, "消息", 20_000, true) }
 
@@ -99,18 +121,22 @@ internal object DataValidation {
             if (id != null) require(goals[id]?.domain == domain) { "关联目标不存在或类型不同" }
         }
         value.plans.forEach { checkGoal(it.goalId, it.domain) }
-        val linked = value.records.mapNotNull { it.planId }
-        unique(linked, "计划完成记录")
+        val completed = value.records.filter { it.completesPlan }.mapNotNull { it.planId }.toSet()
         value.records.forEach { record ->
             checkGoal(record.goalId, record.domain)
             record.planId?.let { planId ->
                 val plan = plans[planId]
                 require(plan != null && plan.domain == record.domain) { "关联计划不存在或类型不同" }
-                require(plan.status == PlanStatus.DONE) { "已有完成记录的计划必须为完成状态" }
+                require(!record.completesPlan || plan.status in setOf(PlanStatus.DONE,PlanStatus.ARCHIVED)) { "已有完成记录的计划必须为完成状态" }
             }
         }
         value.plans.forEach { plan ->
-            require((plan.id in linked) == (plan.status == PlanStatus.DONE)) { "完成计划需要实际记录" }
+            require(plan.status != PlanStatus.DONE || plan.id in completed) { "完成计划需要实际记录" }
+            plan.parentId?.let { parent ->
+                require(parent in plans) { "父任务不存在" }
+                val seen=mutableSetOf(plan.id); var cursor: String? = parent
+                while(cursor != null) { require(seen.add(cursor)) { "任务关联存在循环" }; cursor=plans[cursor]?.parentId }
+            }
         }
     }
 

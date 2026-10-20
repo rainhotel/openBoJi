@@ -13,9 +13,15 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
+import androidx.compose.runtime.saveable.Saver
+import com.boji.app.data.ModelJson
+import org.json.JSONObject
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -31,6 +37,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.boji.app.model.*
@@ -55,24 +62,36 @@ fun BojiApp(state: AppState, actions: AppActions) {
         tertiary = Muted, tertiaryContainer = Soft, onTertiaryContainer = Ink,
         background = Color.White, onBackground = Ink, surface = Color.White,
         onSurface = Ink, surfaceVariant = Soft, onSurfaceVariant = Muted,
+        surfaceContainerHighest=Soft,surfaceContainerHigh=Soft,surfaceContainer=Soft,surfaceContainerLow=Color.White,surfaceTint=Ink,
         outline = Color(0xFF9A9A9A), outlineVariant = Line,
     )
     MaterialTheme(colorScheme = colors) {
         var tab by rememberSaveable { mutableIntStateOf(0) }
-        var sheet by remember { mutableStateOf<String?>(null) }
-        var record by remember { mutableStateOf(LifeRecord()) }
-        var plan by remember { mutableStateOf(Plan()) }
-        var goal by remember { mutableStateOf(WeeklyGoal()) }
+        val pageStates=rememberSaveableStateHolder()
+        var sheet by rememberSaveable { mutableStateOf<String?>(null) }
+        var record by rememberSaveable(stateSaver=Saver<LifeRecord,String>(save={ModelJson.record(it).toString()},restore={ModelJson.record(JSONObject(it))})) { mutableStateOf(LifeRecord()) }
+        var plan by rememberSaveable(stateSaver=Saver<Plan,String>(save={ModelJson.plan(it).toString()},restore={ModelJson.plan(JSONObject(it))})) { mutableStateOf(Plan()) }
+        var goal by rememberSaveable(stateSaver=Saver<WeeklyGoal,String>(save={ModelJson.goal(it).toString()},restore={ModelJson.goal(JSONObject(it))})) { mutableStateOf(WeeklyGoal()) }
         var deletion by remember { mutableStateOf<Pair<String, () -> Unit>?>(null) }
         val snackbar = remember { SnackbarHostState() }
         val today = LocalDate.parse(state.today)
         fun openRecord(value: LifeRecord) { record = value; sheet = "record" }
         fun openPlan(value: Plan) { plan = value; sheet = "plan" }
+        LaunchedEffect(state.openTaskId,state.loading) {
+            if(!state.loading && state.openTaskId!=null) {
+                state.plans.find { it.id==state.openTaskId }?.let { openPlan(it) }
+                actions.consumeTaskSelection()
+            }
+        }
         fun completePlan(value: Plan) {
             openRecord(LifeRecord(title = value.title, domain = value.domain,
                 date = today.toString(), minutes = value.expectedMinutes,
                 goalId = value.goalId, planId = value.id))
         }
+        // Restore encrypted settings before an editor can autosave its initial value.
+        if(state.loading) { Box(Modifier.fillMaxSize().background(Color.White),contentAlignment=Alignment.Center) { CircularProgressIndicator() };return@MaterialTheme }
+        if(sheet=="settings") { SettingsEditor(state,actions,onClose={sheet=null});return@MaterialTheme }
+        if(sheet=="memory") { MemoryScreen(state,actions,onClose={sheet=null});return@MaterialTheme }
         LaunchedEffect(state.error, state.notice) {
             val message = state.error ?: state.notice
             if (message != null) {
@@ -92,7 +111,10 @@ fun BojiApp(state: AppState, actions: AppActions) {
                         }
                         Text("薄肌", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
                     }
-                    IconButton(onClick = { sheet = "settings" }) { Glyph("settings", description = "设置") }
+                    Row {
+                        TextButton(onClick={sheet="memory"}) { Text("记忆",fontSize=13.sp) }
+                        IconButton(onClick = { sheet = "settings" }) { Glyph("settings", description = "设置") }
+                    }
                 }
             },
             bottomBar = {
@@ -125,21 +147,23 @@ fun BojiApp(state: AppState, actions: AppActions) {
             Box(Modifier.fillMaxSize().padding(padding)) {
                 if (state.loading) CircularProgressIndicator(Modifier.align(Alignment.Center), color = Ink)
                 else AnimatedContent(targetState = tab, label = "页面") { selected ->
+                    pageStates.SaveableStateProvider(selected) {
                     when (selected) {
                         0 -> TodayPage(state, ::openRecord, ::openPlan, ::completePlan,
                             { goal = WeeklyGoal(); sheet = "goal" },
                             { goal = it; sheet = "goal" })
                         1 -> AssistantPage(state, actions, { sheet = "draft" }, { sheet = "settings" })
-                        2 -> CalendarPage(state, ::openRecord, ::openPlan, ::completePlan)
+                        2 -> TaskWorkspace(state,actions,::openRecord,::openPlan,::completePlan)
                         else -> SpacePage(state, actions, ::openRecord, { goal = WeeklyGoal(); sheet = "goal" },
                             { goal = it; sheet = "goal" })
+                    }
                     }
                 }
             }
         }
         if (sheet != null) {
             ModalBottomSheet(onDismissRequest = { sheet = null },
-                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+                sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true,confirmValueChange={it!=SheetValue.Hidden}),
                 containerColor = Color.White, dragHandle = { BottomSheetDefaults.DragHandle(color = Line) }) {
                 when (sheet) {
                     "record" -> RecordEditor(record, state.goals, state.plans,
@@ -148,7 +172,7 @@ fun BojiApp(state: AppState, actions: AppActions) {
                         onDelete = if (state.records.any { it.id == record.id }) ({
                             deletion = "删除这条记录？" to { actions.deleteRecord(record.id); sheet = null }
                         }) else null)
-                    "plan" -> PlanEditor(plan, state.goals,
+                    "plan" -> PlanEditor(plan, state.goals,records=state.records,onEditRecord=::openRecord,
                         onSave = { value, repeats -> actions.savePlan(value, repeats); sheet = null },
                         onCancel = { sheet = null },
                         onSkip = if (state.plans.any { it.id == plan.id } && plan.status == PlanStatus.TODO) ({ actions.skipPlan(plan.id); sheet = null }) else null,
@@ -157,9 +181,8 @@ fun BojiApp(state: AppState, actions: AppActions) {
                         }) else null)
                     "goal" -> GoalEditor(goal, onSave = { actions.saveGoal(it); sheet = null }, onCancel = { sheet = null },
                         onArchive = if (state.goals.any { it.id == goal.id }) ({ actions.archiveGoal(goal.id); sheet = null }) else null)
-                    "draft" -> state.draft?.let { batch -> DraftEditor(batch, state.goals, state.plans,
+                    "draft" -> state.draft?.let { batch -> DraftEditor(batch, state.goals, state.plans,notificationsAllowed=state.notificationsAllowed,onChange=actions::saveDraft,
                         onConfirm = { actions.confirmDraft(it); sheet = null }, onDismiss = { actions.dismissDraft(); sheet = null }) }
-                    "settings" -> SettingsEditor(state.settings, actions, state.installedSkills, onClose = { sheet = null })
                 }
             }
         }
@@ -199,7 +222,7 @@ private fun TodayPage(state: AppState, record: (LifeRecord) -> Unit, plan: (Plan
 }
 
 @Composable
-private fun CalendarPage(state: AppState, record: (LifeRecord) -> Unit, plan: (Plan) -> Unit, complete: (Plan) -> Unit) {
+internal fun CalendarPage(state: AppState, record: (LifeRecord) -> Unit, plan: (Plan) -> Unit, complete: (Plan) -> Unit,showTitle: Boolean=true) {
     var selected by rememberSaveable { mutableStateOf(LocalDate.now().toString()) }
     var monthText by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
     val month = YearMonth.parse(monthText)
@@ -207,8 +230,8 @@ private fun CalendarPage(state: AppState, record: (LifeRecord) -> Unit, plan: (P
     val plans = state.plans.filter { it.date == selected }.sortedBy { it.time }
     val records = state.records.filter { it.date == selected }.sortedByDescending { it.createdAt }
     val eventDates = (state.records.map { it.date } + state.plans.map { it.date }).toSet()
-    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 112.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item { PageTitle("日历") }
+    LazyColumn(Modifier.fillMaxSize().testTag("task-calendar"), contentPadding = PaddingValues(start = 24.dp, end = 24.dp, bottom = 112.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        if(showTitle)item { PageTitle("日历") }
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text("${month.year}年 ${month.monthValue}月", fontWeight = FontWeight.SemiBold, fontSize = 19.sp, modifier = Modifier.weight(1f))
@@ -273,7 +296,7 @@ private fun SpacePage(state: AppState, actions: AppActions, editRecord: (LifeRec
         }
         if (state.views.isNotEmpty()) item {
             Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                state.views.forEach { view ->
+                state.views.filter { it.scope=="records" }.forEach { view ->
                     InputChip(selected = domain == view.domain && week == view.thisWeek,
                         onClick = { domainName = view.domain?.name.orEmpty(); week = view.thisWeek },
                         label = { Text(view.name) }, trailingIcon = {
@@ -340,6 +363,15 @@ private fun SpacePage(state: AppState, actions: AppActions, editRecord: (LifeRec
 @Composable
 private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () -> Unit, settings: () -> Unit) {
     var text by rememberSaveable { mutableStateOf("") }
+    var submitted by rememberSaveable { mutableStateOf<String?>(null) }
+    fun send() { if(!state.assistantBusy && state.draft==null && (text.isNotBlank() || state.pendingImage!=null)) { submitted=text.trim();actions.sendMessage(text.trim()) } }
+    LaunchedEffect(state.messages.lastOrNull()?.id) {
+        val last=state.messages.lastOrNull()
+        if(last?.user==true && last.text.removeSuffix("\n[图片]")==submitted) {
+            if(text.trim()==submitted)text=""
+            submitted=null
+        }
+    }
     val listState = rememberLazyListState()
     LaunchedEffect(state.voiceText) {
         state.voiceText?.let { recognized -> text = if (text.isBlank()) recognized else "$text $recognized"; actions.consumeVoice() }
@@ -384,7 +416,8 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
                 Surface(shape = RoundedCornerShape(20.dp), color = Soft) {
                     Column(Modifier.fillMaxWidth().padding(18.dp)) {
                         Text("待确认", fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                        Text("${draft.records.size} 条记录 · ${draft.plans.size} 个计划", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+                        Text("${draft.records.size} 条记录 · ${draft.plans.size} 个计划 · ${draft.memories.size} 条记忆", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+                        draft.memories.take(3).forEach { Text(it.text,fontSize=14.sp,modifier=Modifier.padding(vertical=4.dp)) }
                         draft.records.take(3).forEach { Text("${it.title}  ${recordValue(it)}", fontSize = 14.sp, modifier = Modifier.padding(vertical = 4.dp)) }
                         draft.plans.take(3).forEach { Text("${it.date.takeLast(5)}  ${it.title}", fontSize = 14.sp, modifier = Modifier.padding(vertical = 4.dp)) }
                         Button(onClick = showDraft, modifier = Modifier.fillMaxWidth().padding(top = 12.dp), shape = RoundedCornerShape(16.dp)) { Text("核对并保存") }
@@ -398,18 +431,20 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
                     Glyph("image", modifier = Modifier.size(18.dp)); Text("已选图片", Modifier.weight(1f).padding(start = 10.dp), fontSize = 13.sp)
                     IconButton(onClick = actions::removeImage) { Glyph("close", description = "移除图片") }
                 }
-                Text("发送后，图片将交给所选云端模型", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(8.dp))
+                Text(if(state.settings.enabled && state.settings.connections.getOrNull(state.settings.activeIndex)?.supportsImages==true)
+                    "照片将交给当前模型识别" else "照片作为本地附件，请补充文字记录", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(8.dp))
             }
             Surface(color = Soft, shape = RoundedCornerShape(26.dp)) {
                 Column(Modifier.padding(horizontal = 8.dp, vertical = 4.dp)) {
                     TextField(text, { text = it }, Modifier.fillMaxWidth().testTag("assistant-input"), placeholder = { Text("说说刚做了什么…", color = Muted) },
                         colors = TextFieldDefaults.colors(focusedContainerColor = Soft, unfocusedContainerColor = Soft, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent),
-                        maxLines = 5)
+                        maxLines = 5,keyboardOptions=KeyboardOptions(imeAction=ImeAction.Send),keyboardActions=KeyboardActions(onSend={send()}))
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         IconButton(onClick = actions::selectImage, enabled = !state.assistantBusy) { Glyph("image", description = "添加图片") }
+                        TextButton(onClick=actions::takePhoto,enabled=!state.assistantBusy) { Text("拍照",fontSize=12.sp) }
                         IconButton(onClick = actions::voiceInput, enabled = !state.assistantBusy) { Glyph("mic", description = "语音输入") }
                         Spacer(Modifier.weight(1f))
-                        FilledIconButton(onClick = { val outgoing = text.trim(); if (outgoing.isNotBlank() || state.pendingImage != null) { actions.sendMessage(outgoing); text = "" } },
+                        FilledIconButton(onClick = ::send,
                             enabled = !state.assistantBusy && state.draft == null && (text.isNotBlank() || state.pendingImage != null), modifier = Modifier.size(48.dp).testTag("assistant-send")) { Glyph("up", Color.White, description = "发送") }
                     }
                 }
@@ -441,13 +476,13 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
                 if (plan.domain != Domain.FINANCE) "${plan.expectedMinutes} 分钟" else "").filter { it.isNotEmpty() }.joinToString(" · ")
             Text(subtitle, color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 5.dp))
         }
-        if (plan.status == PlanStatus.TODO) TextButton(onClick = onComplete) { Text("完成", fontSize = 13.sp) }
+        if (plan.status in setOf(PlanStatus.TODO,PlanStatus.IN_PROGRESS)) TextButton(onClick = onComplete) { Text("完成", fontSize = 13.sp) }
         else Text(plan.status.label, fontSize = 12.sp, color = Muted, modifier = Modifier.padding(12.dp))
     }
 }
 @Composable internal fun RecordRow(record: LifeRecord, goals: List<WeeklyGoal>, showDate: Boolean = false, onClick: () -> Unit) {
     Row(Modifier.fillMaxWidth().heightIn(min = 72.dp).clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick).padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-        Box(Modifier.size(40.dp).background(Soft, RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) { Glyph(when (record.domain) { Domain.TRAINING -> "training"; Domain.FINANCE -> "money"; Domain.LEARNING -> "book" }, Muted, Modifier.size(19.dp)) }
+        Box(Modifier.size(40.dp).background(Soft, RoundedCornerShape(13.dp)), contentAlignment = Alignment.Center) { Glyph(when (record.domain) { Domain.TRAINING -> "training"; Domain.FINANCE -> "money"; else -> "book" }, Muted, Modifier.size(19.dp)) }
         Column(Modifier.weight(1f).padding(start = 12.dp, end = 12.dp)) {
             Text(record.title, fontWeight = FontWeight.Medium, fontSize = 15.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
             val detail = listOf(if (showDate) record.date.takeLast(5) else "", record.domain.label,
@@ -459,7 +494,7 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
 }
 internal fun recordValue(record: LifeRecord): String = if (record.domain == Domain.FINANCE) {
     (when(record.moneyKind) { MoneyKind.EXPENSE -> "−"; MoneyKind.INCOME, MoneyKind.REFUND -> "+"; MoneyKind.TRANSFER -> "↔" }) + "¥" + Amounts.yuan(record.amountFen)
-} else "${record.minutes} 分钟"
+} else listOfNotNull(if(record.count>0) "${record.count} ${record.countUnit}" else null,if(record.minutes>0 || record.count==0) "${record.minutes} 分钟" else null).joinToString(" · ")
 @Composable internal fun GoalRow(goal: WeeklyGoal, records: List<LifeRecord>, date: LocalDate, onClick: () -> Unit) {
     val value = Progress.value(goal, records, date)
     val fill by animateFloatAsState((value.toFloat() / goal.target.coerceAtLeast(1)).coerceIn(0f, 1f), label = "目标进度")

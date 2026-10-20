@@ -12,6 +12,7 @@ internal object ModelJson {
         put("moneyKind", value.moneyKind.name); put("category", value.category); put("note", value.note)
         putNullable("goalId", value.goalId); putNullable("planId", value.planId)
         put("source", value.source); putNullable("sourceId", value.sourceId); put("createdAt", value.createdAt)
+        put("count",value.count); put("countUnit",value.countUnit); put("attachments",JSONArray(value.attachments)); put("completesPlan",value.completesPlan)
     }
 
     fun record(value: JSONObject) = LifeRecord(
@@ -20,18 +21,26 @@ internal object ModelJson {
         moneyKind = enumValueOf(value.string("moneyKind")), category = value.string("category"),
         note = value.string("note"), goalId = value.nullableString("goalId"), planId = value.nullableString("planId"),
         source = value.string("source"), sourceId = value.nullableString("sourceId"), createdAt = value.string("createdAt"),
+        count = if (value.has("count")) value.int("count") else 0, countUnit=value.optString("countUnit","次"),
+        attachments=value.optJSONArray("attachments")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList(),
+        completesPlan=if (value.has("completesPlan")) value.boolean("completesPlan") else true,
     )
 
     fun plan(value: Plan) = JSONObject().apply {
         put("id", value.id); put("title", value.title); put("domain", value.domain.name); put("date", value.date)
         put("time", value.time); put("expectedMinutes", value.expectedMinutes); put("status", value.status.name)
         putNullable("goalId", value.goalId); putNullable("seriesId", value.seriesId)
+        put("deadline",value.deadline); put("priority",value.priority); put("project",value.project)
+        putNullable("parentId",value.parentId); value.reminderMinutes?.let { put("reminderMinutes",it) }
     }
 
     fun plan(value: JSONObject) = Plan(
         id = value.string("id"), title = value.string("title"), domain = enumValueOf(value.string("domain")),
         date = value.string("date"), time = value.string("time"), expectedMinutes = value.int("expectedMinutes"),
         status = enumValueOf(value.string("status")), goalId = value.nullableString("goalId"), seriesId = value.nullableString("seriesId"),
+        deadline=value.optString("deadline",""), priority=if(value.has("priority"))value.int("priority") else 2,
+        project=value.optString("project",""),parentId=value.optString("parentId").takeIf { it.isNotBlank() && it != "null" },
+        reminderMinutes=if(value.has("reminderMinutes") && !value.isNull("reminderMinutes"))value.int("reminderMinutes") else null,
     )
 
     fun goal(value: WeeklyGoal) = JSONObject().apply {
@@ -47,11 +56,17 @@ internal object ModelJson {
 
     fun view(value: SavedView) = JSONObject().apply {
         put("name", value.name); putNullable("domain", value.domain?.name); put("thisWeek", value.thisWeek)
+        put("sorts",JSONArray(value.sorts)); put("groupBy",value.groupBy); put("status",value.status); put("columns",JSONArray(value.columns))
+        put("scope",value.scope)
     }
 
     fun view(value: JSONObject) = SavedView(
         name = value.string("name"), domain = value.nullableString("domain")?.let { enumValueOf<Domain>(it) },
         thisWeek = value.boolean("thisWeek"),
+        sorts=value.optJSONArray("sorts")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: listOf("deadline","priority"),
+        groupBy=value.optString("groupBy",""),status=value.optString("status",""),
+        columns=value.optJSONArray("columns")?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: listOf("date","deadline","priority","domain","status"),
+        scope=value.optString("scope","records"),
     )
 
     fun message(value: ChatMessage) = JSONObject().apply {
@@ -64,22 +79,30 @@ internal object ModelJson {
         put("id", value.id)
         put("records", JSONArray().apply { value.records.forEach { put(record(it)) } })
         put("plans", JSONArray().apply { value.plans.forEach { put(plan(it)) } })
+        put("memories",JSONArray().apply { value.memories.forEach { put(memory(it)) } })
     }
 
     fun draft(value: JSONObject) = DraftBatch(
         id = value.string("id"), records = value.array("records").objects().map { record(it) },
         plans = value.array("plans").objects().map { plan(it) },
+        memories=value.optJSONArray("memories")?.objects()?.map(::memory) ?: emptyList(),
     )
+
+    fun memory(value: MemoryEntry) = JSONObject().put("id",value.id).put("text",value.text).put("source",value.source).put("updatedAt",value.updatedAt)
+    fun memory(value: JSONObject) = MemoryEntry(value.string("id"),value.string("text"),value.string("source"),value.string("updatedAt"))
 
     fun settings(value: ModelSettings, cipher: CredentialCipher) = JSONObject().apply {
         put("enabled", value.enabled); put("activeIndex", value.activeIndex); put("includeHistory", value.includeHistory)
         put("includeFinance", value.includeFinance); put("role", value.role); put("monthlyBudgetFen", value.monthlyBudgetFen)
         put("memory", value.memory)
+        put("includeMemory",value.includeMemory)
+        put("rememberConversation",value.rememberConversation)
         put("connections", JSONArray().apply {
             value.connections.forEach { connection ->
                 put(JSONObject().apply {
                     put("name", connection.name); put("endpoint", connection.endpoint); put("model", connection.model)
                     put("apiKeyCipher", cipher.encrypt(connection.apiKey)); put("supportsImages", connection.supportsImages)
+                    put("thinking",connection.thinking)
                 })
             }
         })
@@ -90,10 +113,13 @@ internal object ModelJson {
         includeHistory = value.boolean("includeHistory"), includeFinance = value.boolean("includeFinance"),
         role = value.string("role"), monthlyBudgetFen = value.long("monthlyBudgetFen"),
         memory = value.optString("memory", ""),
+        includeMemory=value.optBoolean("includeMemory",false),
+        rememberConversation=value.optBoolean("rememberConversation",true),
         connections = value.array("connections").objects().map { connection ->
             ModelConnection(
                 name = connection.string("name"), endpoint = connection.string("endpoint"), model = connection.string("model"),
                 apiKey = cipher.decrypt(connection.string("apiKeyCipher")), supportsImages = connection.boolean("supportsImages"),
+                thinking=connection.optBoolean("thinking",false),
             )
         },
     )

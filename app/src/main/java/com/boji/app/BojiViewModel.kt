@@ -3,6 +3,8 @@ package com.boji.app
 import android.app.Application
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import androidx.exifinterface.media.ExifInterface
 import android.net.Uri
 import android.util.Base64
 import androidx.lifecycle.AndroidViewModel
@@ -10,6 +12,10 @@ import androidx.lifecycle.viewModelScope
 import com.boji.app.assistant.AssistantClient
 import com.boji.app.assistant.PiAssistant
 import com.boji.app.assistant.AgentWorkspace
+import com.boji.app.assistant.DraftLinker
+import com.boji.app.assistant.DeepSeekConnection
+import com.boji.app.assistant.AssistantFailure
+import com.boji.app.reminder.TaskReminders
 import com.boji.app.backup.BackupCrypto
 import com.boji.app.data.BojiStore
 import com.boji.app.model.*
@@ -32,6 +38,8 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
     private val mutableState = MutableStateFlow(AppState())
     val state: StateFlow<AppState> = mutableState
     private var assistantJob: Job? = null
+    private var settingsDraftJob: Job? = null
+    private var connectionJob: Job? = null
     private var pi: PiAssistant? = null
     private val agentWorkspace = AgentWorkspace(application)
     private fun agent(): PiAssistant = pi ?: PiAssistant(getApplication(),store,onStatus = { status ->
@@ -42,12 +50,14 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
     init { mutate(null) { expandRecurring(); } }
 
     fun refresh() { if (!state.value.loading) mutate(null) { expandRecurring() } }
+    fun openTask(id: String) { mutableState.update { it.copy(openTaskId=id) } }
+    override fun consumeTaskSelection() { mutableState.update { it.copy(openTaskId=null) } }
 
     private fun mutate(message: String? = "已保存", block: () -> Unit) {
         viewModelScope.launch {
             try {
                 mutex.withLock {
-                    val snapshot = withContext(Dispatchers.IO) { block(); store.snapshot() }
+                    val snapshot = withContext(Dispatchers.IO) { block(); store.snapshot().also { TaskReminders.rebuild(getApplication(),it.plans) } }
                     updateSnapshot(snapshot, message)
                 }
             } catch (error: Exception) {
@@ -62,6 +72,8 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
             goals=snapshot.goals, settings=snapshot.settings, views=snapshot.views,
             messages=snapshot.messages, draft=snapshot.draft, notice=message, error=null,
             installedSkills=agentWorkspace.installed(),
+            memories=snapshot.memories,settingsDraft=store.settingsDraft(),notificationsAllowed=TaskReminders.allowed(getApplication()),
+            preciseReminders=TaskReminders.precise(getApplication()),
         ) }
     }
 
@@ -71,11 +83,55 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
     override fun archiveGoal(id: String) = mutate("已归档") { store.archiveGoal(id) }
     override fun saveSettings(settings: ModelSettings) {
         cancelAssistant()
+        val pending=state.value.settingsDraft?.copy(includeHistory=settings.includeHistory,includeFinance=settings.includeFinance,
+            includeMemory=settings.includeMemory,rememberConversation=settings.rememberConversation,
+            role=settings.role,monthlyBudgetFen=settings.monthlyBudgetFen)
+        settingsDraftJob?.cancel()
         mutate {
             store.saveSettings(settings)
+            store.saveSettingsDraft(pending)
             agentWorkspace.clearSession()
         }
     }
+    override fun saveSettingsDraft(settings: ModelSettings) {
+        mutableState.update { it.copy(settingsDraft=settings) }
+        settingsDraftJob?.cancel()
+        settingsDraftJob=viewModelScope.launch {
+            try { delay(200); mutex.withLock { withContext(Dispatchers.IO) { store.saveSettingsDraft(settings) } } }
+            catch(cancelled:CancellationException){throw cancelled}
+            catch(_:Exception){showError("配置暂存失败，请检查输入后重试")}
+        }
+    }
+    override fun saveMemory(memory: MemoryEntry) { cancelAssistant();mutate("已记住") { store.saveMemory(memory); agentWorkspace.clearSession() } }
+    override fun deleteMemory(id: String) { cancelAssistant();mutate("已遗忘") { store.deleteMemory(id); agentWorkspace.clearSession() } }
+    override fun testConnection(settings: ModelSettings) {
+        if(state.value.connectionBusy)return
+        cancelAssistant()
+        mutableState.update { it.copy(connectionBusy=true,connectionStatus="正在检测官方模型与工具调用…") }
+        connectionJob=viewModelScope.launch {
+            try {
+                val current=settings.connections[settings.activeIndex]
+                val models=withContext(Dispatchers.IO) { DeepSeekConnection.models(current.apiKey.trim()) }
+                mutableState.update { it.copy(discoveredModels=models) }
+                require(models.any { it.model==current.model }) { "当前模型不在官方可用列表，请选择一个可用模型" }
+                withTimeout(90_000) { DeepSeekConnection.check(current) }
+                settingsDraftJob?.cancel()
+                mutex.withLock {
+                    val snapshot=withContext(Dispatchers.IO) {
+                        store.saveSettings(settings.copy(enabled=true,connections=listOf(current.copy(endpoint=DeepSeekConnection.ENDPOINT,
+                            supportsImages=models.find { it.model==current.model }?.supportsImages ?: false)),activeIndex=0))
+                        store.saveSettingsDraft(null);agentWorkspace.clearSession();store.snapshot()
+                    }
+                    updateSnapshot(snapshot,"DeepSeek 已启用")
+                }
+                mutableState.update { it.copy(connectionStatus="连接成功，对话与工具调用已通过") }
+            } catch(_: CancellationException) { mutableState.update { it.copy(connectionStatus="已停止检测，输入已暂存") } }
+            catch(failure: AssistantFailure) { mutableState.update { it.copy(connectionStatus=failure.safeMessage) } }
+            catch(_: Exception) { mutableState.update { it.copy(connectionStatus="未通过检测，请检查 Key、账户额度和网络后重试") } }
+            finally { mutableState.update { it.copy(connectionBusy=false) } }
+        }
+    }
+    override fun cancelConnection() { connectionJob?.cancel() }
     override fun saveView(view: SavedView) = mutate { store.saveView(view) }
     override fun deleteView(name: String) = mutate("视图已删除") { store.deleteView(name) }
     override fun skipPlan(id: String) = mutate("已跳过") { store.skipPlan(id) }
@@ -93,6 +149,7 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
             val rule = JSONObject().put("id",id).put("title",plan.title).put("domain",plan.domain.name)
                 .put("date",plan.date).put("time",plan.time).put("minutes",plan.expectedMinutes)
                 .put("goalId",plan.goalId).put("days",JSONArray(repeatDays.sorted()))
+                .put("template",com.boji.app.data.ModelJson.plan(plan.copy(status=PlanStatus.TODO)))
             val generated = generateRule(rule, store.snapshot().plans.map { it.id }.toSet())
             rules.put(rule)
             store.savePlans(generated,JSONObject().put("rules",rules).put("exceptions",JSONArray(exceptions().toList())).toString())
@@ -114,7 +171,9 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
                 domain=Domain.valueOf(rule.getString("domain")), date=date.toString(),
                 time=rule.getString("time"), expectedMinutes=rule.getInt("minutes"),
                 goalId=rule.optString("goalId").takeIf { it.isNotBlank() && it != "null" }, seriesId=rule.getString("id"),
-            ) }.filter { it.id !in known && it.id !in excluded }.toList()
+            ).let { generated -> rule.optJSONObject("template")?.let { source ->
+                com.boji.app.data.ModelJson.plan(source).copy(id=generated.id,date=generated.date,seriesId=generated.seriesId,status=PlanStatus.TODO)
+            } ?: generated } }.filter { it.id !in known && it.id !in excluded }.toList()
     }
     private fun expandRecurring() {
         val existing = store.snapshot().plans.map { it.id }.toSet()
@@ -127,6 +186,13 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
         val current = state.value
         if (current.assistantBusy) return
         if (current.draft != null) { showError("先保存或放下当前草稿"); return }
+        if(current.settings.enabled && !DeepSeekConnection.isOfficial(current.settings.connections.getOrNull(current.settings.activeIndex)?.endpoint.orEmpty())) {
+            showError("当前版本请在设置连接 DeepSeek 官方平台");return
+        }
+        if(text.isBlank() && current.pendingImage!=null && (!current.settings.enabled ||
+            current.settings.connections.getOrNull(current.settings.activeIndex)?.supportsImages!=true)) {
+            showError("请补一句照片对应的记录，照片会作为本地附件保存");return
+        }
         val input = text.trim().ifEmpty { if (current.pendingImage != null) "请整理这张图片" else "" }
         if (input.isBlank()) return
         if (input.length > 6000) { showError("一次输入请少于 6000 字"); return }
@@ -142,23 +208,22 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
                     updateSnapshot(snapshot,null)
                 }
                 val imageBytes = withContext(Dispatchers.IO) { imagePath?.let { File(it).readBytes() } }
-                val reply = if (state.value.settings.enabled) agent().respond(input,state.value,imageBytes)
-                    else AssistantClient().respond(input,state.value,imageBytes)
+                val canInspect=state.value.settings.connections.getOrNull(state.value.settings.activeIndex)?.supportsImages == true
+                val reply = if (state.value.settings.enabled) agent().respond(input,state.value,if(canInspect)imageBytes else null)
+                    else AssistantClient().respond(input,state.value,null)
                 ensureActive()
                 val batch = reply.draft?.let { draft ->
-                    if (imagePath == null) draft else draft.copy(records=draft.records.map {
-                        it.copy(source="图片",sourceId="image:${File(imagePath).name}")
-                    })
+                    DraftLinker.link(draft,state.value,input,imagePath?.let { File(it).name })
                 }
                 mutex.withLock {
                     val snapshot = withContext(Dispatchers.IO) {
-                        store.saveMessage(ChatMessage(user=false,text=reply.text))
+                        store.saveMessage(ChatMessage(user=false,text=reply.text + if(imagePath!=null && !canInspect) "\n照片作为本地附件保留，未交给模型识图。" else ""))
                         store.savePendingDraft(batch)
                         store.snapshot()
                     }
                     updateSnapshot(snapshot,null)
                 }
-                if (reply.success && batch != null) mutableState.update { it.copy(pendingImage=null) }
+                if (reply.success && batch?.records?.isNotEmpty() == true) mutableState.update { it.copy(pendingImage=null) }
             } catch (_: CancellationException) {
                 mutableState.update { it.copy(notice="已停止，输入保留在对话中") }
             } catch (error: Exception) {
@@ -192,7 +257,11 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
     }
 
     override fun onCleared() { assistantJob?.cancel(); pi?.close(); store.close(); super.onCleared() }
-    override fun confirmDraft(batch: DraftBatch) = mutate("已保存") { store.applyDraft(batch) }
+    override fun confirmDraft(batch: DraftBatch) = mutate("已保存") {
+        store.applyDraft(batch)
+        if(batch.memories.isNotEmpty()) agentWorkspace.clearSession()
+    }
+    override fun saveDraft(batch: DraftBatch) = mutate(null) { store.savePendingDraft(batch) }
     override fun dismissDraft() = mutate("已放下，原文保留") { store.savePendingDraft(null) }
     override fun removeImage() { mutableState.update { it.copy(pendingImage=null) } }
     override fun consumeVoice() { mutableState.update { it.copy(voiceText=null) } }
@@ -215,11 +284,23 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
                     while (maxOf(options.outWidth,options.outHeight)/sample > 1800) sample*=2
                     val bitmap = BitmapFactory.decodeByteArray(bytes,0,bytes.size,BitmapFactory.Options().apply { inSampleSize=sample })
                         ?: error("图片无法读取")
-                    val jpeg = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.JPEG,85,it) }.toByteArray()
+                    val orientation=runCatching { ExifInterface(bytes.inputStream()).getAttributeInt(ExifInterface.TAG_ORIENTATION,ExifInterface.ORIENTATION_NORMAL) }.getOrDefault(ExifInterface.ORIENTATION_NORMAL)
+                    val transform=Matrix().apply { when(orientation) {
+                        ExifInterface.ORIENTATION_FLIP_HORIZONTAL->setScale(-1f,1f)
+                        ExifInterface.ORIENTATION_ROTATE_180->setRotate(180f)
+                        ExifInterface.ORIENTATION_FLIP_VERTICAL->setScale(1f,-1f)
+                        ExifInterface.ORIENTATION_TRANSPOSE->{setRotate(90f);postScale(-1f,1f)}
+                        ExifInterface.ORIENTATION_ROTATE_90->setRotate(90f)
+                        ExifInterface.ORIENTATION_TRANSVERSE->{setRotate(270f);postScale(-1f,1f)}
+                        ExifInterface.ORIENTATION_ROTATE_270->setRotate(270f)
+                    } }
+                    val oriented=if(transform.isIdentity)bitmap else Bitmap.createBitmap(bitmap,0,0,bitmap.width,bitmap.height,transform,true)
+                    val jpeg = ByteArrayOutputStream().also { oriented.compress(Bitmap.CompressFormat.JPEG,85,it) }.toByteArray()
+                    if(oriented!==bitmap)oriented.recycle()
                     bitmap.recycle()
                     File(mediaDir,"${UUID.randomUUID()}.jpg").apply { writeBytes(jpeg) }
                 }
-                mutableState.update { it.copy(pendingImage=file.absolutePath,notice="已选图片，点击发送后交给模型") }
+                mutableState.update { it.copy(pendingImage=file.absolutePath,notice="已选照片，补充内容后发送") }
             } catch (error: Exception) { showError(error.message ?: "图片读取失败") }
         }
     }
@@ -232,8 +313,12 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
                     val data = JSONObject(json)
                     val attachments = JSONObject()
                     val records = data.getJSONArray("records")
-                    val referenced = (0 until records.length()).mapNotNull { records.getJSONObject(it).optString("sourceId")
-                        .takeIf { s -> s.startsWith("image:") }?.removePrefix("image:") }.toSet()
+                    val referenced = (0 until records.length()).flatMap { index ->
+                        val row=records.getJSONObject(index)
+                        val legacy=row.optString("sourceId").takeIf { it.startsWith("image:") }?.removePrefix("image:")
+                        val attached=row.optJSONArray("attachments")
+                        listOfNotNull(legacy)+(attached?.let { a -> (0 until a.length()).map { a.getString(it) } } ?: emptyList())
+                    }.toSet()
                     for (name in referenced) {
                         require(name.matches(Regex("[a-zA-Z0-9-]+\\.jpg"))) { "附件名称无效" }
                         val file = File(mediaDir,name)
@@ -271,6 +356,10 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
                     val name = source.removePrefix("image:")
                     require(name.matches(Regex("[a-zA-Z0-9-]+\\.jpg")) && (files.has(name) || File(mediaDir,name).isFile)) { "备份缺少引用的图片" }
                 }
+                rows.getJSONObject(i).optJSONArray("attachments")?.let { a -> (0 until a.length()).forEach { index ->
+                    val name=a.getString(index)
+                    require(name.matches(Regex("[a-zA-Z0-9-]+\\.jpg")) && (files.has(name) || File(mediaDir,name).isFile)) { "备份缺少引用的图片" }
+                } }
             }
             // Files first; an invalid database import can leave harmless unreferenced media, never half-imported rows.
             pending.forEach { (file,content) -> if (!file.exists()) file.writeBytes(content) }

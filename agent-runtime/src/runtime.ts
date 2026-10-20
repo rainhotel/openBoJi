@@ -8,15 +8,20 @@ import { files, setFiles, readFileSync } from './skill-fs';
 type Host = (method: string, args: any) => Promise<any>;
 const emptyUsage = () => ({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
   cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } });
-const domain = Type.Union(['TRAINING', 'FINANCE', 'LEARNING'].map(v => Type.Literal(v)));
+const domain = Type.Union(['TRAINING', 'FINANCE', 'LEARNING', 'SLEEP', 'PROJECT', 'OTHER'].map(v => Type.Literal(v)));
 const title = Type.String({ minLength: 1, maxLength: 80 });
 const date = Type.String({ pattern: '^\\d{4}-\\d{2}-\\d{2}$' });
 const record = Type.Object({ domain, title, date, minutes: Type.Integer({ minimum: 0, maximum: 1440 }),
   amountFen: Type.Integer({ minimum: 0, maximum: 999999999999 }),
   moneyKind: Type.Union(['EXPENSE','INCOME','TRANSFER','REFUND'].map(v => Type.Literal(v))),
-  category: Type.String({ maxLength: 40 }) }, { additionalProperties: false });
+  category: Type.String({ maxLength: 40 }), count: Type.Optional(Type.Integer({minimum:0,maximum:100000})),
+  countUnit: Type.Optional(Type.Union(['次','组','个','页','题'].map(v=>Type.Literal(v)))),
+  planId: Type.Optional(Type.String({maxLength:128})), note: Type.Optional(Type.String({maxLength:2000})), completesPlan: Type.Optional(Type.Boolean()) }, { additionalProperties: false });
 const plan = Type.Object({ domain, title, date, time: Type.String({ maxLength: 5 }),
-  expectedMinutes: Type.Integer({ minimum: 0, maximum: 1440 }) }, { additionalProperties: false });
+  expectedMinutes: Type.Integer({ minimum: 0, maximum: 1440 }), ref: Type.Optional(Type.String({maxLength:64})),
+  parentId: Type.Optional(Type.String({maxLength:128})), priority: Type.Optional(Type.Integer({minimum:0,maximum:3})),
+  deadline: Type.Optional(Type.String({maxLength:19})), project: Type.Optional(Type.String({maxLength:100})),
+  reminderMinutes: Type.Optional(Type.Integer({minimum:0,maximum:10080})) }, { additionalProperties: false });
 
 export const toolSchemas = [
   { name: 'read', description: 'Read a listed SKILL.md or a bundled skill reference. Paths are virtual, read-only.',
@@ -29,7 +34,8 @@ export const toolSchemas = [
   { name: 'memory_read', description: 'Read the user-managed persistent preferences. Requires history permission.',
     parameters: Type.Object({}, { additionalProperties: false }) },
   { name: 'propose_draft', description: 'Stage records/plans for user review. This never saves actual records. Call once with the whole proposal.',
-    parameters: Type.Object({ records: Type.Array(record, { maxItems: 20 }), plans: Type.Array(plan, { maxItems: 20 }) }, { additionalProperties: false }) }
+    parameters: Type.Object({ records: Type.Array(record, { maxItems: 20 }), plans: Type.Array(plan, { maxItems: 180 }),
+      memories: Type.Optional(Type.Array(Type.Object({text:Type.String({minLength:1,maxLength:1000})},{additionalProperties:false}),{maxItems:20})) }, { additionalProperties: false }) }
 ];
 
 function wireMessages(messages: any[]) {
@@ -41,7 +47,8 @@ function wireMessages(messages: any[]) {
       : { type: 'text', text: c.text }) });
     else if (m.role === 'assistant') {
       const calls = m.content.filter((c: any) => c.type === 'toolCall');
-      result.push({ role: 'assistant', content: m.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n') || null,
+      result.push({ role: 'assistant', content: m.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n'),
+        ...(m.content.some((c:any)=>c.type==='thinking') ? {reasoning_content:m.content.filter((c:any)=>c.type==='thinking').map((c:any)=>c.thinking).join('\n')} : {}),
         ...(calls.length ? { tool_calls: calls.map((c: any) => ({ id: c.id, type: 'function', function: { name: c.name, arguments: JSON.stringify(c.arguments) } })) } : {}) });
     } else if (m.role === 'toolResult') result.push({ role: 'tool', tool_call_id: m.toolCallId,
       content: m.content.filter((c: any) => c.type === 'text').map((c: any) => c.text).join('\n') });
@@ -78,11 +85,12 @@ export async function run(input: any, host: Host, signal?: AbortSignal) {
           if (++turns > 8) throw Error('本轮步骤达到上限，请缩小任务');
           const response = await host('model', { model: model.id, messages: wireMessages(context.messages),
             tools: getCurrentTools(context.messages).map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.parameters } })),
-            stream: false, max_tokens: 4096 });
+            stream: false, max_tokens: 8192, thinking: {type:input.thinking ? 'enabled' : 'disabled'} });
           if (options?.signal?.aborted) throw Error('已停止');
           const choice = response.choices?.[0];
           if (!choice?.message || choice.message.refusal) throw Error('模型未能完成本次请求');
           if (choice.message.content) message.content.push({ type: 'text', text: String(choice.message.content).slice(0, 16000) });
+          if (typeof choice.message.reasoning_content === 'string') message.content.push({type:'thinking',thinking:choice.message.reasoning_content});
           for (const c of choice.message.tool_calls || []) {
             if (!c.id || c.type !== 'function' || typeof c.function?.arguments !== 'string') throw Error('工具调用格式无效');
             message.content.push({ type: 'toolCall', id: c.id, name: c.function.name, arguments: JSON.parse(c.function.arguments) });
@@ -131,7 +139,7 @@ export function inspectSkill(text: string) {
   try {
     setFiles({ '/skills/imported/SKILL.md': text });
     const result = loadSkillsFromDir({ dir: '/skills', source: 'user' });
-    if (!result.skills.length || result.diagnostics.some(d => !d.message.includes('must match'))) return { valid: false, name: '' };
+    if (!result.skills.length || result.diagnostics.length) return { valid: false, name: '' };
     return { valid: true, name: result.skills[0].name };
   } finally { setFiles(previous); }
 }

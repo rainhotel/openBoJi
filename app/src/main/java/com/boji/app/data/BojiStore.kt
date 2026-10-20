@@ -32,6 +32,7 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
             goals = data.goals, settings = readSettings(db), views = data.views,
             messages = rows(db, "messages", "seq").map { ModelJson.message(it) },
             draft = readMeta(db, PENDING_DRAFT)?.let { ModelJson.draft(JSONObject(it)) },
+            memories=readMemories(db),
         )
     }
 
@@ -39,13 +40,7 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
     fun saveRecord(record: LifeRecord) = updateData { data ->
         val old = data.records.find { it.id == record.id }
         val records = data.records.filterNot { it.id == record.id } + record
-        val plans = data.plans.map { plan ->
-            when {
-                plan.id == record.planId -> plan.copy(status = PlanStatus.DONE)
-                plan.id == old?.planId && old?.planId != record.planId -> plan.copy(status = PlanStatus.TODO)
-                else -> plan
-            }
-        }
+        val plans = reconcile(data.plans,records,setOfNotNull(record.planId,old?.planId))
         data.copy(records = records, plans = plans)
     }
 
@@ -56,7 +51,7 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
             val old = data.records.find { it.id == id }
             data.copy(
                 records = data.records.filterNot { it.id == id },
-                plans = data.plans.map { if (it.id == old?.planId) it.copy(status = PlanStatus.TODO) else it },
+                plans = reconcile(data.plans,data.records.filterNot { it.id == id },setOfNotNull(old?.planId)),
             )
         }
     }
@@ -93,7 +88,7 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
         transaction { db ->
             val before = readData(db)
             val deleted = before.plans.find { it.id == id }
-            val after = before.copy(plans=before.plans.filterNot { it.id == id },
+            val after = before.copy(plans=before.plans.filterNot { it.id == id }.map { if(it.parentId == id) it.copy(parentId=null) else it },
                 records=before.records.map { if (it.planId == id) it.copy(planId=null) else it })
             DataValidation.data(after)
             persistData(db,before,after)
@@ -125,6 +120,25 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
         transaction { db -> putMeta(db, SETTINGS, ModelJson.settings(settings, cipher).toString()) }
     }
 
+    @Synchronized fun saveSettingsDraft(settings: ModelSettings?) = transaction { db ->
+        if(settings == null) db.delete("meta","name = ?",arrayOf("settings-draft"))
+        else { DataValidation.settings(settings.copy(enabled=false)); putMeta(db,"settings-draft",ModelJson.settings(settings,cipher).toString()) }
+    }
+    @Synchronized fun settingsDraft(): ModelSettings? = transaction { db -> readMeta(db,"settings-draft")?.let { ModelJson.settings(JSONObject(it),cipher) } }
+
+    private fun readMemories(db: SQLiteDatabase): List<MemoryEntry> = readMeta(db,"memories")?.let {
+        JSONArray(it).objects().map(ModelJson::memory)
+    } ?: readSettings(db).memory.takeIf { it.isNotBlank() }?.chunked(1000)?.mapIndexed { index,text -> MemoryEntry(id="legacy-memory-$index",text=text,source="旧版偏好") }.orEmpty()
+    @Synchronized fun saveMemory(memory: MemoryEntry) = transaction { db ->
+        DataValidation.memory(memory)
+        val rows=merge(readMemories(db),listOf(memory)) { it.id }
+        require(rows.size <= 200) { "记忆最多 200 条" }
+        putMeta(db,"memories",jsonArray(rows,ModelJson::memory).toString())
+    }
+    @Synchronized fun deleteMemory(id: String) = transaction { db ->
+        putMeta(db,"memories",jsonArray(readMemories(db).filterNot { it.id == id },ModelJson::memory).toString())
+    }
+
     @Synchronized
     fun saveView(view: SavedView) = updateData { data -> data.copy(views = merge(data.views, listOf(view)) { it.name }) }
 
@@ -147,6 +161,7 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
             if (batch == null) {
                 db.delete("meta", "name = ?", arrayOf(PENDING_DRAFT))
             } else {
+                batch.memories.forEach(DataValidation::memory)
                 require(!batchApplied(db, batch.id)) { "这份草稿已保存" }
                 val candidate = withDraft(readData(db), batch)
                 DataValidation.data(candidate)
@@ -165,6 +180,10 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
                 val candidate = withDraft(before, batch)
                 DataValidation.data(candidate)
                 persistData(db, before, candidate)
+                batch.memories.forEach(DataValidation::memory)
+                val memories=merge(readMemories(db),batch.memories) { it.id }
+                require(memories.size <= 200) { "记忆最多 200 条" }
+                if(batch.memories.isNotEmpty()) putMeta(db,"memories",jsonArray(memories,ModelJson::memory).toString())
                 db.insertOrThrow("applied_batches", null, ContentValues().apply { put("id", batch.id) })
             }
             val pending = readMeta(db, PENDING_DRAFT)?.let { ModelJson.draft(JSONObject(it)) }
@@ -187,6 +206,7 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
             })
             put("monthlyBudgetFen", readSettings(db).monthlyBudgetFen)
             put("memory", readSettings(db).memory)
+            put("memories",jsonArray(readMemories(db),ModelJson::memory))
             put("recurrence", JSONObject(readMeta(db,RECURRENCE) ?: RecurrenceJson.EMPTY))
         }.toString()
     }
@@ -214,6 +234,8 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
         DataValidation.unique(batchIds, "备份批次")
         val budget = root.long("monthlyBudgetFen")
         val memory = if (root.has("memory")) root.get("memory").also { require(it is String && it.length <= 4000) { "记忆格式无效" } } as String else null
+        val importedMemories=root.optJSONArray("memories")?.objects()?.map(ModelJson::memory)
+        importedMemories?.forEach(DataValidation::memory)
         require(budget in 0..DataValidation.MAX_MONEY_FEN) { "预算超出范围" }
         transaction { db ->
             val before = readData(db)
@@ -234,6 +256,10 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
             val currentSettings = readSettings(db)
             val settings = currentSettings.copy(monthlyBudgetFen = budget,memory=memory ?: currentSettings.memory)
             putMeta(db, SETTINGS, ModelJson.settings(settings, cipher).toString())
+            if(importedMemories != null) {
+                val merged=merge(readMemories(db),importedMemories) { it.id }; require(merged.size <= 200)
+                putMeta(db,"memories",jsonArray(merged,ModelJson::memory).toString())
+            }
             // A restored record could make a pending proposal stale; actual records remain untouched.
             db.delete("meta", "name = ?", arrayOf(PENDING_DRAFT))
         }
@@ -244,16 +270,24 @@ class BojiStore(context: Context, databaseName: String = "boji.db") : AutoClosea
 
     private fun withDraft(data: StoredData, batch: DraftBatch): StoredData {
         DataValidation.id(batch.id)
-        require(batch.records.size + batch.plans.size in 1..300) { "草稿需包含 1 到 300 项" }
+        require(batch.records.size + batch.plans.size + batch.memories.size in 1..300) { "草稿需包含 1 到 300 项" }
+        batch.memories.forEach(DataValidation::memory)
         DataValidation.unique(batch.records.map { it.id }, "草稿记录")
         DataValidation.unique(batch.plans.map { it.id }, "草稿计划")
         require(batch.records.none { record -> data.records.any { it.id == record.id } }) { "草稿记录已存在" }
         require(batch.plans.none { plan -> data.plans.any { it.id == plan.id } }) { "草稿计划已存在" }
-        val completedPlanIds = batch.records.mapNotNull { it.planId }.toSet()
+        val affected = batch.records.mapNotNull { it.planId }.toSet()
         return data.copy(
             records = data.records + batch.records,
-            plans = (data.plans + batch.plans).map { if (it.id in completedPlanIds) it.copy(status = PlanStatus.DONE) else it },
+            plans = reconcile(data.plans + batch.plans,data.records + batch.records,affected),
         )
+    }
+
+    private fun reconcile(plans: List<Plan>, records: List<LifeRecord>, affected: Set<String>): List<Plan> = plans.map { plan ->
+        if(plan.id !in affected || plan.status == PlanStatus.ARCHIVED) plan else {
+            val linked=records.filter { it.planId == plan.id }
+            plan.copy(status=when { linked.any { it.completesPlan } -> PlanStatus.DONE; linked.isNotEmpty() -> PlanStatus.IN_PROGRESS; else -> PlanStatus.TODO })
+        }
     }
 
     private fun updateData(transform: (StoredData) -> StoredData) {

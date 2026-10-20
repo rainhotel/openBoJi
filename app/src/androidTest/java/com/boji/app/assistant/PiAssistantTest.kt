@@ -22,7 +22,7 @@ class PiAssistantTest {
     private lateinit var workspace: AgentWorkspace
     private var agent: PiAssistant? = null
     private val connection = ModelConnection(endpoint="https://example.com/v1",model="fixture",apiKey="DO_NOT_LEAK_KEY")
-    private val settings = ModelSettings(enabled=true,connections=listOf(connection),includeHistory=true,memory="周四晚上训练")
+    private val settings = ModelSettings(enabled=true,connections=listOf(connection),includeHistory=true,includeMemory=true,memory="周四晚上训练")
 
     @Before fun setup() {
         store=BojiStore(context,"pi-test-$id.db")
@@ -79,7 +79,7 @@ class PiAssistantTest {
     @Test fun ungrantedHistoryAndFinanceNeverEnterModelContext() = runBlocking {
         val finance=LifeRecord(domain=Domain.FINANCE,title="PRIVATE_FINANCE",amountFen=5000)
         val learning=LifeRecord(domain=Domain.LEARNING,title="PRIVATE_LEARNING",minutes=30)
-        val state=AppState(settings=settings.copy(includeHistory=false,memory="PRIVATE_MEMORY"),records=listOf(finance,learning))
+        val state=AppState(settings=settings.copy(includeHistory=false,includeMemory=false,memory="PRIVATE_MEMORY"),records=listOf(finance,learning))
         var turn=0; val payloads=mutableListOf<String>()
         val runtime=create(AssistantTransport { _,_,body ->
             payloads+=body
@@ -118,5 +118,48 @@ class PiAssistantTest {
         assertNull(store.snapshot().draft)
         val reply=withTimeout(15_000) { runtime.respond("新请求",AppState(settings=settings)) }
         assertTrue(reply.text,reply.success); assertEquals("继续正常",reply.text)
+    }
+
+    @Test fun examAndDailyRevisionAreStagedTogetherWithRemindersWithoutOverwritingOldPlans() = runBlocking {
+        store.saveSettings(settings)
+        val old=Plan(title="原有安排")
+        store.savePlan(old)
+        val examDate=LocalDate.now().plusDays(15)
+        val exams=JSONArray().put(JSONObject().put("ref","exam").put("domain","LEARNING").put("title","英语考试")
+            .put("date",examDate.toString()).put("time","09:00").put("expectedMinutes",120)
+            .put("deadline","${examDate}T09:00").put("priority",0).put("project","期末英语"))
+        val revision=JSONArray()
+        repeat(14) { index -> revision.put(JSONObject().put("domain","LEARNING").put("title","英语复习第${index+1}天")
+            .put("date",LocalDate.now().plusDays(index.toLong()).toString()).put("time","19:00")
+            .put("expectedMinutes",30).put("parentId","exam").put("deadline",examDate.toString())
+            .put("reminderMinutes",10).put("priority",1).put("project","期末英语")) }
+        for(index in 0 until revision.length())exams.put(revision.getJSONObject(index))
+        var turn=0
+        val runtime=create(AssistantTransport { _,_,body -> when(++turn) {
+            1->call("memory_read",JSONObject())
+            2->call("list_plans",JSONObject())
+            3-> { assertTrue(toolTexts(body).contains(old.id));call("propose_draft",JSONObject().put("records",JSONArray()).put("plans",exams)) }
+            else->answer()
+        } })
+        val reply=runtime.respond("英语考试十五天后上午九点，每晚七点复习半小时，提前十分钟提醒",store.snapshot())
+        assertTrue(reply.text,reply.success)
+        val draft=reply.draft!!
+        assertEquals(15,draft.plans.size);assertEquals(listOf(old),store.snapshot().plans)
+        val exam=draft.plans.single {it.title=="英语考试"}
+        assertTrue(draft.plans.filter {it.id!=exam.id}.all {it.parentId==exam.id && it.reminderMinutes==10})
+        store.savePendingDraft(draft);store.applyDraft(draft)
+        assertEquals(16,store.snapshot().plans.size)
+        assertEquals(old,store.snapshot().plans.single {it.id==old.id})
+    }
+
+    @Test fun imageLargerThanOneMegabyteOfWireJsonReachesTheNativeTransport() = runBlocking {
+        var received=false
+        val runtime=create(AssistantTransport { _,_,body ->
+            assertTrue(body.length>1_000_000)
+            assertTrue(body.contains("image_url"));received=true;answer("图片已接收")
+        })
+        val state=AppState(settings=settings.copy(connections=listOf(connection.copy(supportsImages=true))))
+        val reply=withTimeout(30_000){runtime.respond("记录这张训练照片",state,ByteArray(900_000){42})}
+        assertTrue(reply.text,reply.success);assertTrue(received)
     }
 }

@@ -77,32 +77,49 @@ internal object AssistantProtocol {
     internal fun parseDraft(body: String): AssistantReply {
         val root = JSONObject(body)
         val text = optionalString(root, "text", 4000)
+        val planItems=array(root,"plans",180)
+        val refs=planItems.mapNotNull { it.optString("ref").takeIf(String::isNotBlank) }
+        require(refs.distinct().size == refs.size)
+        val ids=refs.associateWith { java.util.UUID.randomUUID().toString() }
         val records = array(root, "records").map { item ->
             val domain = Domain.valueOf(string(item, "domain", 20))
             val minutes = integer(item, "minutes", 0, 1440).toInt()
             val amount = integer(item, "amountFen", 0, 999_999_999_999)
             val kind = if (domain == Domain.FINANCE) MoneyKind.valueOf(string(item, "moneyKind", 20)) else MoneyKind.EXPENSE
-            require(if (domain == Domain.FINANCE) amount > 0 && minutes == 0 else minutes > 0 && amount == 0L)
+            val count=if(item.has("count"))integer(item,"count",0,100000).toInt() else 0
+            require(if (domain == Domain.FINANCE) amount > 0 && minutes == 0 && count == 0 else amount == 0L &&
+                (minutes > 0 || count > 0 || domain in setOf(Domain.PROJECT,Domain.OTHER)))
+            val linked=optionalString(item,"planId",128).takeIf(String::isNotBlank)
             LifeRecord(domain = domain, title = string(item, "title", 80), date = date(item), minutes = minutes,
-                amountFen = amount, moneyKind = kind, category = optionalString(item, "category", 40), source = "AI 草稿")
+                amountFen = amount, moneyKind = kind, category = optionalString(item, "category", 40), source = "AI 草稿",
+                count=count,countUnit=optionalString(item,"countUnit",4).ifBlank { "次" },planId=ids[linked] ?: linked,
+                note=optionalString(item,"note",2000),completesPlan=if(item.has("completesPlan"))item.getBoolean("completesPlan") else true)
+                .also(com.boji.app.data.DataValidation::record)
         }
-        val plans = array(root, "plans").map { item ->
+        val plans = planItems.map { item ->
             val time = optionalString(item, "time", 5)
             if (time.isNotEmpty()) {
                 require(time.matches(Regex("[0-2][0-9]:[0-5][0-9]")))
                 LocalTime.parse(time)
             }
-            Plan(domain = Domain.valueOf(string(item, "domain", 20)), title = string(item, "title", 80),
-                date = date(item), time = time, expectedMinutes = integer(item, "expectedMinutes", 0, 1440).toInt())
+            val parent=optionalString(item,"parentId",128).takeIf(String::isNotBlank)
+            Plan(id=ids[item.optString("ref")] ?: java.util.UUID.randomUUID().toString(),
+                domain = Domain.valueOf(string(item, "domain", 20)), title = string(item, "title", 80),
+                date = date(item), time = time, expectedMinutes = integer(item, "expectedMinutes", 0, 1440).toInt(),
+                priority=if(item.has("priority"))integer(item,"priority",0,3).toInt() else 2,
+                deadline=optionalString(item,"deadline",19),project=optionalString(item,"project",100),parentId=ids[parent] ?: parent,
+                reminderMinutes=if(item.has("reminderMinutes") && !item.isNull("reminderMinutes"))integer(item,"reminderMinutes",0,10080).toInt() else null)
+                .also(com.boji.app.data.DataValidation::plan)
         }
-        val draft = if (records.isEmpty() && plans.isEmpty()) null else DraftBatch(records = records, plans = plans)
+        val memories=array(root,"memories").map { com.boji.app.model.MemoryEntry(text=string(it,"text",1000),source="AI 提取，用户确认") }
+        val draft = if (records.isEmpty() && plans.isEmpty() && memories.isEmpty()) null else DraftBatch(records = records, plans = plans,memories=memories)
         return AssistantReply(text.ifBlank { if (draft == null) "请补充要记录或安排的内容。" else "已整理，请核对后保存。" }, draft)
     }
 
-    private fun array(root: JSONObject, key: String): List<JSONObject> {
+    private fun array(root: JSONObject, key: String, maximum: Int = 20): List<JSONObject> {
         if (!root.has(key)) return emptyList()
         val array = root.getJSONArray(key)
-        require(array.length() <= 20)
+        require(array.length() <= maximum)
         return (0 until array.length()).map { array.getJSONObject(it) }
     }
 

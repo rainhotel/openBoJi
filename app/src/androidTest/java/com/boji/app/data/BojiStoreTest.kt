@@ -99,16 +99,18 @@ class BojiStoreTest {
     }
 
     @Test
-    fun oneFactPerPlanAndDeletingFactResetsPlan() {
+    fun multipleFactsPreserveCompletionUntilLastCompletingFactIsRemoved() {
         val plan = Plan(title = "训练", domain = Domain.TRAINING)
         store.savePlan(plan)
         val record = LifeRecord(title = "完成训练", minutes = 30, planId = plan.id)
         store.saveRecord(record)
         assertEquals(PlanStatus.DONE, store.snapshot().plans.single().status)
-        fails { store.saveRecord(record.copy(id = "second-fact")) }
+        store.saveRecord(record.copy(id = "second-fact"))
         fails { store.skipPlan(plan.id) }
-        assertEquals(1, store.snapshot().records.size)
+        assertEquals(2, store.snapshot().records.size)
         store.deleteRecord(record.id)
+        assertEquals(PlanStatus.DONE,store.snapshot().plans.single().status)
+        store.deleteRecord("second-fact")
         assertTrue(store.snapshot().records.isEmpty())
         assertEquals(PlanStatus.TODO, store.snapshot().plans.single().status)
         store.skipPlan(plan.id)

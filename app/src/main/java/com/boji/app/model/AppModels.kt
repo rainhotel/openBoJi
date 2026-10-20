@@ -6,10 +6,10 @@ import java.time.LocalDate
 import java.time.LocalDateTime
 import java.util.UUID
 
-enum class Domain(val label: String) { TRAINING("训练"), FINANCE("收支"), LEARNING("学习") }
+enum class Domain(val label: String) { TRAINING("训练"), FINANCE("收支"), LEARNING("学习"), SLEEP("睡眠"), PROJECT("项目"), OTHER("其他") }
 enum class MoneyKind(val label: String) { EXPENSE("支出"), INCOME("收入"), TRANSFER("转账"), REFUND("退款") }
 enum class GoalMode(val label: String) { COUNT("每周次数"), MINUTES("每周分钟") }
-enum class PlanStatus(val label: String) { TODO("待办"), DONE("完成"), SKIPPED("跳过") }
+enum class PlanStatus(val label: String) { TODO("未开始"), IN_PROGRESS("进行中"), DONE("已完成"), SKIPPED("已跳过"), ARCHIVED("已归档") }
 
 data class LifeRecord(
     val id: String = UUID.randomUUID().toString(),
@@ -26,6 +26,10 @@ data class LifeRecord(
     val source: String = "手动",
     val sourceId: String? = null,
     val createdAt: String = LocalDateTime.now().toString(),
+    val count: Int = 0,
+    val countUnit: String = "次",
+    val attachments: List<String> = emptyList(),
+    val completesPlan: Boolean = true,
 )
 
 data class Plan(
@@ -38,6 +42,11 @@ data class Plan(
     val status: PlanStatus = PlanStatus.TODO,
     val goalId: String? = null,
     val seriesId: String? = null,
+    val deadline: String = "",
+    val priority: Int = 2,
+    val project: String = "",
+    val parentId: String? = null,
+    val reminderMinutes: Int? = null,
 )
 
 data class WeeklyGoal(
@@ -56,6 +65,7 @@ data class ModelConnection(
     val model: String = "",
     val apiKey: String = "",
     val supportsImages: Boolean = false,
+    val thinking: Boolean = false,
 )
 data class ModelSettings(
     val enabled: Boolean = false,
@@ -66,16 +76,23 @@ data class ModelSettings(
     val role: String = "综合",
     val monthlyBudgetFen: Long = 0,
     val memory: String = "",
+    val includeMemory: Boolean = false,
+    val rememberConversation: Boolean = true,
 )
 
 data class DraftBatch(
     val id: String = UUID.randomUUID().toString(),
     val records: List<LifeRecord> = emptyList(),
     val plans: List<Plan> = emptyList(),
+    val memories: List<MemoryEntry> = emptyList(),
 )
 data class ChatMessage(val id: String = UUID.randomUUID().toString(), val user: Boolean, val text: String)
 data class InstalledSkill(val id: String, val name: String)
-data class SavedView(val name: String, val domain: Domain? = null, val thisWeek: Boolean = false)
+data class MemoryEntry(val id: String = UUID.randomUUID().toString(), val text: String,
+    val source: String = "用户确认", val updatedAt: String = LocalDateTime.now().toString())
+data class SavedView(val name: String, val domain: Domain? = null, val thisWeek: Boolean = false,
+    val sorts: List<String> = listOf("deadline", "priority"), val groupBy: String = "",
+    val status: String = "", val columns: List<String> = listOf("date","deadline","priority","domain","status"),val scope: String="records")
 data class AppState(
     val loading: Boolean = true,
     val today: String = LocalDate.now().toString(),
@@ -89,6 +106,14 @@ data class AppState(
     val assistantBusy: Boolean = false,
     val assistantStatus: String = "",
     val installedSkills: List<InstalledSkill> = emptyList(),
+    val memories: List<MemoryEntry> = emptyList(),
+    val connectionStatus: String? = null,
+    val connectionBusy: Boolean = false,
+    val discoveredModels: List<ModelConnection> = emptyList(),
+    val notificationsAllowed: Boolean = false,
+    val preciseReminders: Boolean = false,
+    val settingsDraft: ModelSettings? = null,
+    val openTaskId: String? = null,
     val pendingImage: String? = null,
     val notice: String? = null,
     val error: String? = null,
@@ -109,8 +134,10 @@ interface AppActions {
     fun sendMessage(text: String)
     fun cancelAssistant()
     fun confirmDraft(batch: DraftBatch)
+    fun saveDraft(batch: DraftBatch) {}
     fun dismissDraft()
     fun selectImage()
+    fun takePhoto() { selectImage() }
     fun removeImage()
     fun voiceInput()
     fun consumeVoice()
@@ -121,6 +148,14 @@ interface AppActions {
     fun importSkill() {}
     fun clearAgentSession() {}
     fun removeSkill(id: String) {}
+    fun saveSettingsDraft(settings: ModelSettings) {}
+    fun testConnection(settings: ModelSettings) {}
+    fun cancelConnection() {}
+    fun saveMemory(memory: MemoryEntry) {}
+    fun deleteMemory(id: String) {}
+    fun requestNotifications() {}
+    fun requestPreciseReminders() {}
+    fun consumeTaskSelection() {}
 }
 
 object Amounts {
@@ -140,7 +175,7 @@ object Progress {
                 runCatching { LocalDate.parse(it.date) }.getOrNull()?.let { d -> !d.isBefore(start) && d.isBefore(start.plusDays(7)) } == true
         }
         return if (goal.mode == GoalMode.MINUTES) rows.sumOf { it.minutes }
-        else rows.filter { it.minutes > 0 && it.minutes >= goal.minimumMinutes }.map { it.date }.distinct().size
+        else rows.filter { (it.minutes > 0 || it.count > 0) && it.minutes >= goal.minimumMinutes }.map { it.date }.distinct().size
     }
     fun netExpense(records: List<LifeRecord>): Long = records.filter { it.domain == Domain.FINANCE }.sumOf {
         when (it.moneyKind) { MoneyKind.EXPENSE -> it.amountFen; MoneyKind.REFUND -> -it.amountFen; else -> 0 }

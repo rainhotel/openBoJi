@@ -63,6 +63,7 @@ class MainFlowTest {
         tab("助手")
         compose.onNodeWithTag("assistant-input").performTextInput("今天练拳40分钟，晚饭28元，学Redis半小时")
         compose.onNodeWithTag("assistant-input").assertTextContains("今天练拳40分钟，晚饭28元，学Redis半小时")
+        android.os.SystemClock.sleep(400)
         compose.onNodeWithTag("assistant-send").assertIsEnabled().performClick()
         try { compose.waitUntil(10_000) { store.snapshot().draft != null } }
         catch (error: Exception) { throw AssertionError(compose.onRoot(useUnmergedTree=true).printToString(),error) }
@@ -102,9 +103,10 @@ class MainFlowTest {
         compose.onNodeWithTag("record-fab").performClick()
         compose.onNodeWithText("内容",substring=false).performTextInput("练拳")
         compose.onNodeWithText("时长（分钟）").performTextInput("40")
-        compose.onAllNodes(hasText(title) and hasClickAction()).onLast().performClick()
+        compose.onAllNodes(hasText(title) and hasClickAction()).onLast().performScrollTo().assertIsDisplayed().performClick()
         compose.onNodeWithText("保存",substring=false).performScrollTo().performClick()
-        compose.waitUntil(10_000) { store.snapshot().records.any { it.goalId == goal.id } }
+        try { compose.waitUntil(10_000) { store.snapshot().records.any { it.goalId == goal.id } } }
+        catch (failure: Throwable) { throw AssertionError("Records: ${store.snapshot().records}\n${compose.onRoot(useUnmergedTree=true).printToString()}",failure) }
         assertEquals(1,Progress.value(goal,store.snapshot().records,LocalDate.now()))
         compose.onNodeWithText("1 / 3 次",substring=true).assertExists()
         capture("01-today")
