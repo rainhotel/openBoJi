@@ -34,6 +34,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build.ps1 -Install -Serial em
 
 真实云端验收单独运行 `scripts/test-live-deepseek.ps1`，需要当前进程的 `BOJI_DEEPSEEK_KEY` 环境变量及专用模拟器。正常回归不会调用付费模型。脚本通过 stdin 传递临时凭据，测试在应用内加密保存、使用后恢复原配置；不把密钥作为命令行参数或写入交付日志。
 
+小屏验收运行 `scripts/test-small-screen.ps1`：在专用模拟器使用 360×640 dp、1.3 倍字体，检查照片记录、双视图和横屏任务行；结束时恢复标准显示参数。当前测试及真实云端记录见[验收记录](./docs/implementation-status.md)。
+
 调试 APK 输出：`artifacts/boji-debug.apk`。Android 设备已连接时，可以使用 `adb install -r artifacts/boji-debug.apk` 安装。
 
 ## 实现

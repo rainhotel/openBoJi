@@ -1,44 +1,73 @@
 {
-  "generatedAt": "2026-10-20T10:08:37.415682+08:00",
-  "sourceCommit": "b8a93f00066f28c6e40ed37ba33342836e818ab5",
-  "versionName": "0.2.0",
-  "versionCode": 2,
+  "generatedAt": "2026-10-21T09:33:05.848708+08:00",
+  "sourceCommit": "a04a93effdd2839c23f4530f4aa96d3a9d8ec1b3",
+  "versionName": "0.3.0",
+  "versionCode": 3,
   "minSdk": 26,
   "targetSdk": 36,
   "apk": "boji-debug.apk",
-  "apkBytes": 10872359,
-  "apkSha256": "9d0df2530ff6ed58b4937295e12eb3a537a817a6c3bad08d2d9c04c738fb0cdd",
-  "installedApkSha256": "9d0df2530ff6ed58b4937295e12eb3a537a817a6c3bad08d2d9c04c738fb0cdd",
+  "apkBytes": 10928551,
+  "apkSha256": "c2e18949c029dc776e6794838278e91b0bfb0fc25d97551a66388f36395dcc62",
+  "installedApkSha256": "c2e18949c029dc776e6794838278e91b0bfb0fc25d97551a66388f36395dcc62",
   "piVersion": "1.3.0",
-  "agentBundleBytes": 320851,
-  "agentBundleSha256": "5ee3e7285d86017346c1f241b1f182d8298b9a0f57df98e727c3aea462f41426",
+  "agentBundleBytes": 322353,
+  "agentBundleSha256": "3820a705e5800e4fbef08e30dbb41c6f9e3a04e4ad1045604ad2056dff2fcfd3",
   "checks": {
     "js": {
-      "passed": 8,
-      "failed": 0
+      "passed": 10,
+      "failed": 0,
+      "skipped": 0
     },
     "jvm": {
-      "passed": 25,
+      "passed": 26,
       "failed": 0,
       "skipped": 0
     },
     "android36Emulator": {
-      "passed": 29,
-      "failed": 0
+      "passed": 43,
+      "failed": 0,
+      "seconds": 219.036
+    },
+    "smallScreen": {
+      "passed": 1,
+      "failed": 0,
+      "seconds": 19.121,
+      "portraitDp": "360x640",
+      "landscapeDp": "640x360",
+      "fontScale": 1.3,
+      "visibleTaskRowDp": 62.0
+    },
+    "liveDeepSeek": {
+      "passed": 1,
+      "failed": 0,
+      "checkpoints": 9,
+      "seconds": 53.652
     },
     "lintErrors": 0,
     "lintWarnings": 8
   },
-  "cloudProviderLiveTest": false,
+  "cloudProviderLiveTest": true,
   "userPhysicalDeviceTest": false,
+  "credentialScan": {
+    "trackedAndUnignoredFiles": true,
+    "decompressedApkEntries": true,
+    "privateTemporaryKeyRemoved": true
+  },
   "scenarioEvidence": {
-    "01-today.png": "cd82bd4c89fc473ee3d56e85a13ddc955945a8b74e52636aa1c3d05c3f8aeb11",
-    "02-assistant-draft.png": "29dd252e27922a626691dbcb558ce53072ead08dbafb49036b7c66e508915a16",
-    "03-space-table.png": "4a087cdaca73d0b015d0d77ed395956a8e846e008fd957952a9ae6bdfad4491f",
-    "04-calendar.png": "a4dd9e2de7784d8c1a0001ce2915a7888005c0a731709cd80c6ccd191db1aa33",
-    "05-task-actual.png": "b456c519a1f5f5421e6584f85b92d136ce2416fd97f8851fc363610d574439f8",
-    "06-task-landscape.png": "378862034e87c96a857e697f84c916fa0fb54aa6faf2bc6cbb1a42ff1c812035",
-    "07-settings-keyboard.png": "94b33dfdcda1da4ccf9a17de2568f3e15350c0ddeed134d920a587c015691146",
-    "08-memory.png": "cb5f4e5823cac5afa0a347e9155e11917039b3d61f5ca612269319d440843b9f"
-  }
+    "01-today.png": "61735ca7f41aa301c4bad2e89f335d950b32474f09402861f55eda2a5d71e9dc",
+    "02-assistant-draft.png": "2f02e93a7db5cac2680e97d592563ce3b18cb2ca8c34f32143e0c0f3232e220c",
+    "03-space-table.png": "310e0f290e8dcb5144b76b3bb863e6c4b98d1743da44ec54655f5ced840571f6",
+    "04-calendar.png": "3ccd7902c22ea5b2a11e13b123ac5dd7566fed9cb9de377cce014885e7a16523",
+    "09-live-created.png": "c26200ff28da3ccd5c3272ad21d4dfd93893d70b32a00e1858cb273ba17e5050",
+    "10-live-table.png": "03891bacb4260946bff74e20ae98b7d1f6dd1638c402fbb0b251ba36fcf67e99",
+    "11-live-workout.png": "801e99ebde1a1a14b5be4525405a4c8d8804d227bace66a33f024ce02c697944",
+    "12-landscape-task-row.png": "3d01e543f95612abbb3059b3e46ccae437d1fb98c747282f85aeeb364533dbb3",
+    "13-skill-import.png": "e78b162b00cefd3bd69991c224ccace407c34614422bb9cb390f2a9702b71ba1"
+  },
+  "historicalScreenshots": [
+    "05-task-actual.png",
+    "06-task-landscape.png",
+    "07-settings-keyboard.png",
+    "08-memory.png"
+  ]
 }

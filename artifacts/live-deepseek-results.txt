@@ -1,0 +1,24 @@
+
+com.boji.app.LiveAssistantFlowTest:
+LIVE: Official models + two-turn tool connection check passed
+
+LIVE: Thinking-mode two-turn tool replay passed
+
+LIVE: Chat directly created dated task with duration, priority and reminder
+
+LIVE: Follow-up updated original task; undo restored it
+
+LIVE: Ambiguous exam month/year was clarified without writes
+
+LIVE: Three dated study tasks and reminders created through native Pi tools
+
+LIVE: Real image request + seven-to-eight correction + one-tap record confirmation passed
+
+LIVE: Explicit long-term memory was proposed and saved with one tap
+
+LIVE: Explicit completion preserved unknown duration/quantity without fabricated numbers
+.
+
+Time: 53.652
+
+OK (1 test)

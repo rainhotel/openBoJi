@@ -35,7 +35,7 @@ flowchart TD
 - `PiAssistant.kt` 是 Android 宿主适配：把配置好的模型请求转换为原生 HTTPS，把工具连接到应用。密钥不进入 JS，WebView 不加载远程页面，也不能自行联网。
 - Pi Core 自身不提供完整持久化记忆产品。这里实现的是平台存储适配：保存原生 Pi transcript、最多八轮且不超过 160 KB，按完整用户轮次裁剪；长期偏好由用户编辑。没有声称复用了完整 Pi CLI 会话系统或自动长期记忆引擎。
 
-已提供五个工具：
+已提供七个工具：
 
 | 工具 | 用途 |
 | --- | --- |
@@ -43,11 +43,13 @@ flowchart TD
 | `search_records` | 按日期、领域、文字查实际记录，最多返回 50 条并注明截断 |
 | `list_plans` | 查计划和目标 |
 | `memory_read` | 读取用户维护的长期偏好 |
+| `create_tasks` | 明确创建指令经本地校验后批量保存任务，返回真实 ID 和撤销回执 |
+| `update_tasks` | 按真实 ID 修改指定字段；校验并发变化，不删除任务或伪造完成记录 |
 | `propose_draft` | 生成待确认记录、任务及明确要求的记忆，支持父子任务引用与分批暂存，不能直接保存 |
 
 查询工具受近期记录授权控制，收支另需收支授权，`memory_read` 使用独立长期记忆授权。当前输入始终由用户发送，输入中的收支信息也会随输入交给模型。会话续接独立控制，恢复按角色、数据权限、连接和模型隔离；保存设置及修改／遗忘记忆会清空旧上下文。图片只在当前请求使用，不进入持久会话。修改真实记录必须经过草稿确认和数据库事务。
 
-v0.2 只适配 DeepSeek 官方接口，默认地址预置，通过 `/models` 查询当前账号模型，再检查一次真实的两轮工具往返。适配思考模式 `reasoning_content` 回传及工具调用的非空值类型 `content`。无 Key 的自动测试使用供应商响应夹具，不代表通过了真实云端质量验收。参考：[官方接入说明](https://api-docs.deepseek.com/quick_start/agent_integrations/oh_my_pi/)、[思考模式](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/)。
+v0.3 只适配 DeepSeek 官方接口，默认地址预置，通过 `/models` 查询当前账号模型，再检查一次真实的两轮工具往返。适配思考模式 `reasoning_content` 回传及工具调用的非空值类型 `content`。正常回归使用供应商响应夹具；真实 Key 的手机内完整用例单独运行，结果见[验收记录](./implementation-status.md)。参考：[官方接入说明](https://api-docs.deepseek.com/quick_start/agent_integrations/oh_my_pi/)、[思考模式](https://api-docs.deepseek.com/zh-cn/guides/thinking_mode/)。
 
 每次运行最多八轮模型响应、24 次工具执行，总时限三分钟。停止时取消 Pi、清理待处理端口请求并断开原生 HTTP。失败不会自动重试写入。Tool 错误只返回经过处理的文字，不回显密钥或原始供应商错误。
 

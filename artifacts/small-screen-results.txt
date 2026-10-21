@@ -1,0 +1,8 @@
+
+com.boji.app.CoreUserFlowTest:
+LANDSCAPE: 640x360 dp, font 1.3, visible row 62.0 dp
+.
+
+Time: 19.121
+
+OK (1 test)
