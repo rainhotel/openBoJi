@@ -51,6 +51,22 @@ class CoreUserFlowTest {
         compose.onNodeWithTag("connect-deepseek").assertIsDisplayed()
         compose.onNodeWithTag("settings-back").performClick()
     }
+    @Test fun modelDraftCannotPretendThatInactiveReadPermissionsAreGranted() {
+        lateinit var vm:BojiViewModel
+        compose.runOnUiThread {vm=ViewModelProvider(compose.activity)[BojiViewModel::class.java]}
+        store.saveSettings(before.settings.copy(includeHistory=false,includeMemory=false))
+        store.saveSettingsDraft(before.settings.copy(includeHistory=true,includeMemory=true,connections=listOf(
+            com.boji.app.assistant.DeepSeekConnection.default("UX_SCOPE_DRAFT_TEST")),activeIndex=0))
+        compose.runOnUiThread {vm.refresh()}
+        compose.waitUntil(10000){vm.state.value.settingsDraft?.includeMemory==true && !vm.state.value.settings.includeMemory}
+        compose.onNodeWithContentDescription("设置").performClick()
+        compose.onNodeWithTag("deepseek-key").assertTextContains("UX_SCOPE_DRAFT_TEST")
+        compose.onNodeWithText("使用范围").performClick()
+        compose.onAllNodes(isToggleable()).onFirst().assertIsOff()
+        compose.onAllNodes(isToggleable())[2].assertIsOff()
+        assertFalse(store.snapshot().settings.includeHistory);assertFalse(store.snapshot().settings.includeMemory)
+        compose.onNodeWithTag("settings-back").performClick()
+    }
     @Test fun editingTaskAndCorrectedDraftSurviveRecreation() {
         lateinit var vm:BojiViewModel
         compose.runOnUiThread {vm=ViewModelProvider(compose.activity)[BojiViewModel::class.java]}
@@ -111,7 +127,19 @@ class CoreUserFlowTest {
         compose.runOnUiThread {compose.activity.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE}
         try {
             compose.waitUntil(10000){compose.activity.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE}
-            compose.onNodeWithTag("task-${plan.id}").assertIsDisplayed()
+            compose.waitUntil(10000){compose.onAllNodesWithText("搜索任务或项目").fetchSemanticsNodes().isEmpty()}
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+            android.os.SystemClock.sleep(600)
+            compose.waitForIdle()
+            val row=compose.onNodeWithTag("task-${plan.id}").assertIsDisplayed().fetchSemanticsNode().boundsInRoot
+            assertTrue("Landscape table must show at least 48 dp of the task row",row.height>=48*compose.activity.resources.displayMetrics.density)
+            val config=compose.activity.resources.configuration
+            InstrumentationRegistry.getInstrumentation().sendStatus(0,android.os.Bundle().apply {putString("stream",
+                "\nLANDSCAPE: ${config.screenWidthDp}x${config.screenHeightDp} dp, font ${config.fontScale}, visible row ${row.height/compose.activity.resources.displayMetrics.density} dp\n")})
+            val capture=File(compose.activity.getExternalFilesDir(null),"screenshots/12-landscape-task-row.png").apply {parentFile!!.mkdirs()}
+            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot().let { bitmap ->
+                capture.outputStream().use {bitmap.compress(Bitmap.CompressFormat.PNG,100,it)};bitmap.recycle()
+            }
         } finally {
             compose.runOnUiThread {compose.activity.requestedOrientation=android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED}
         }

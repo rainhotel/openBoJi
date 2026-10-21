@@ -127,15 +127,25 @@ class LiveAssistantFlowTest {
             ask("记住：${marker}期间，我每周二晚上不能学习。")
             assertTrue(store.snapshot().draft?.memories?.any {it.text.contains(marker)}==true)
             compose.onNodeWithTag("chat-confirm-draft").performScrollTo().performClick()
-            compose.waitUntil(15000) {store.snapshot().memories.any {it.text.contains(marker)}}
+            compose.waitUntil(15000) {vm.state.value.memories.any {it.text.contains(marker)} && !vm.state.value.saving}
             report("Explicit long-term memory was proposed and saved with one tap")
+            val unmeasured=Plan(title="${marker}不计时读书",domain=Domain.LEARNING,expectedMinutes=0)
+            vm.savePlan(unmeasured)
+            compose.waitUntil(15000) {vm.state.value.plans.any {it.id==unmeasured.id} && !vm.state.value.saving}
+            ask("今天这项${marker}不计时读书已经完成，我没有记录时长和数量，请记录完成并关联它，不要补数值。")
+            val fact=store.snapshot().draft!!.records.single()
+            assertEquals(unmeasured.id,fact.planId);assertEquals(0,fact.minutes);assertEquals(0,fact.count);assertTrue(fact.completesPlan)
+            compose.onNodeWithTag("chat-confirm-draft").performScrollTo().performClick()
+            compose.waitUntil(15000) {store.snapshot().plans.find {it.id==unmeasured.id}?.status==PlanStatus.DONE}
+            assertEquals(0,store.snapshot().records.single {it.planId==unmeasured.id}.minutes)
+            report("Explicit completion preserved unknown duration/quantity without fabricated numbers")
             source.delete()
             assertTrue("Existing schedule is retained",before.plans.all {old ->store.snapshot().plans.any {it==old}})
         } finally {
             vm.cancelAssistant();vm.cancelConnection()
-            // Scoped cleanup: remove only this synthetic marker, preserve real app data/settings.
-            store.snapshot().records.filter {it.title.contains(marker)}.forEach {store.deleteRecord(it.id)}
-            store.snapshot().plans.filter {it.title.contains(marker)}.forEach {store.deletePlan(it.id)}
+            // The opt-in test owns this dedicated emulator for its duration; preserve all pre-existing IDs.
+            store.snapshot().records.filter {row ->before.records.none {it.id==row.id}}.forEach {store.deleteRecord(it.id)}
+            store.snapshot().plans.filter {row ->before.plans.none {it.id==row.id}}.forEach {store.deletePlan(it.id)}
             store.snapshot().memories.filter {it.text.contains(marker)}.forEach {store.deleteMemory(it.id)}
             store.savePendingDraft(before.draft);store.saveSettings(before.settings);store.saveSettingsDraft(previousDraft)
             vm.clearAgentSession();store.close()

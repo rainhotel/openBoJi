@@ -26,6 +26,7 @@ class CoreExperienceV03Test {
     private val ids=mutableListOf<String>()
     private val viewName="$prefix-view"
     private val receiptRun="$prefix-navigation"
+    private var retryDraftId:String?=null
 
     @Before fun setup() {
         store=BojiStore(InstrumentationRegistry.getInstrumentation().targetContext)
@@ -35,10 +36,27 @@ class CoreExperienceV03Test {
     @After fun cleanup() {
         if(::store.isInitialized) {
             if(store.snapshot().taskReceipt?.id==receiptRun)store.undoAgentTasks()
+            if(retryDraftId!=null && store.snapshot().draft?.id==retryDraftId)store.savePendingDraft(null)
             ids.asReversed().forEach(store::deletePlan)
             store.deleteView(viewName)
             store.close()
         }
+    }
+
+    @Test fun failedLatestMessageCanRetryAndAcceptedInputClearsAfterFastLocalReply() {
+        Assume.assumeFalse(store.snapshot().settings.enabled)
+        Assume.assumeTrue(store.snapshot().draft==null)
+        store.saveMessage(ChatMessage(user=true,text="今天练拳40分钟"))
+        val failed=ChatMessage(user=false,text="网络连接失败，请重试",failed=true)
+        store.saveMessage(failed)
+        compose.runOnUiThread {vm.refresh()}
+        compose.waitUntil(10000) {vm.state.value.messages.lastOrNull()?.id==failed.id}
+        compose.onNodeWithTag("assistant-retry").performScrollTo().performClick()
+        compose.waitUntil(10000) {vm.state.value.draft!=null && !vm.state.value.assistantBusy}
+        retryDraftId=vm.state.value.draft!!.id
+        assertEquals(40,vm.state.value.draft!!.records.single().minutes)
+        compose.waitUntil(10000) {compose.onNodeWithTag("assistant-input").fetchSemanticsNode().config[SemanticsProperties.EditableText].text.isEmpty()}
+        compose.onNodeWithTag("assistant-retry").assertDoesNotExist()
     }
 
     @Test fun futureCalendarDateIsInheritedAndAdvancedFieldsStartCollapsed() {

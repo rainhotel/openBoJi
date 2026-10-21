@@ -46,6 +46,7 @@ private val SortColumns=TaskColumns.filterKeys { it in setOf("date","deadline","
                     FilterChip(selected=!table,onClick={table=false},label={Text("日历")})
                     Spacer(Modifier.width(8.dp))
                     FilterChip(selected=table,onClick={table=true},label={Text("多维表格")})
+                    TextButton(onClick={dialog="view"}){Text("视图")}
                 }
                 TextButton(onClick={edit(Plan(date=selectedDate))}){Text("加计划")}
             }
@@ -53,7 +54,7 @@ private val SortColumns=TaskColumns.filterKeys { it in setOf("date","deadline","
             if(!compact && rows.any { it.reminderMinutes!=null } && !state.notificationsAllowed)
                 TextButton(onClick=actions::requestNotifications){Text("提醒未启用，开启系统通知",fontSize=12.sp)}
             if(!compact)OutlinedTextField(query,{query=it},Modifier.fillMaxWidth().padding(top=8.dp),singleLine=true,label={Text("搜索任务或项目")},shape=RoundedCornerShape(16.dp))
-            Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
+            if(!compact)Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.SpaceBetween) {
                 val filtered=query.isNotBlank() || view.domain!=null || view.status.isNotBlank() || view.thisWeek
                 TextButton(onClick={dialog="view"}){Text(if(filtered)"视图 · 已筛选" else "视图")}
                 if(filtered)TextButton(onClick={query="";view=view.copy(domain=null,status="",thisWeek=false,query="")}){Text("清空筛选")}
@@ -63,7 +64,7 @@ private val SortColumns=TaskColumns.filterKeys { it in setOf("date","deadline","
         }
         if(!table)CalendarPage(state.copy(plans=rows,records=state.records.filter { view.domain==null || it.domain==view.domain }),record,edit,complete,showTitle=false,selectedDate=selectedDate,onSelectDate={selectedDate=it})
         else {
-            Text("${rows.size} 个任务 · ${view.sorts.joinToString(" → ") { SortColumns[it.removePrefix("-")].orEmpty() + if(it.startsWith("-"))"↓" else "↑" }}",
+            if(!compact)Text("${rows.size} 个任务 · ${view.sorts.joinToString(" → ") { SortColumns[it.removePrefix("-")].orEmpty() + if(it.startsWith("-"))"↓" else "↑" }}",
                 color=Muted,fontSize=12.sp,modifier=Modifier.padding(horizontal=24.dp,vertical=8.dp))
             val horizontal=rememberScrollState()
             Box(Modifier.weight(1f).horizontalScroll(horizontal).padding(horizontal=24.dp)) {

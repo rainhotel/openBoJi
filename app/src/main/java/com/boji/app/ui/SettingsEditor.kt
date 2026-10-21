@@ -20,14 +20,15 @@ import com.boji.app.assistant.DeepSeekConnection
 @Composable
 internal fun SettingsEditor(state: AppState, actions: AppActions, onClose: () -> Unit) {
     val initial=remember { state.settingsDraft ?: state.settings }
-    var settings by remember { mutableStateOf(initial) }
+    // Model drafts retain credentials/model choices; permission controls show the active grants.
+    var settings by remember { mutableStateOf(state.settings) }
     val saved=initial.connections.getOrNull(initial.activeIndex)?.takeIf { DeepSeekConnection.isOfficial(it.endpoint) }
     var key by remember { mutableStateOf(saved?.apiKey.orEmpty()) }
     var model by remember { mutableStateOf(saved?.model?.takeIf { it.startsWith("deepseek-") } ?: DeepSeekConnection.DEFAULT_MODEL) }
     var thinking by remember { mutableStateOf(saved?.thinking ?: false) }
     var section by rememberSaveable { mutableIntStateOf(0) }
     var reveal by remember { mutableStateOf(false) }
-    var budget by rememberSaveable { mutableStateOf(Amounts.yuan(initial.monthlyBudgetFen)) }
+    var budget by rememberSaveable { mutableStateOf(Amounts.yuan(state.settings.monthlyBudgetFen)) }
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     val models=(state.discoveredModels.map { it.model } + listOf(DeepSeekConnection.DEFAULT_MODEL,"deepseek-v4-pro",model)).distinct()

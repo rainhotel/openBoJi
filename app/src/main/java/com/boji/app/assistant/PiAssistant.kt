@@ -28,6 +28,7 @@ internal class PiAssistant(
         val result: CompletableDeferred<JSONObject>, var draft: DraftBatch? = null, val jobs: MutableList<Job> = mutableListOf())
     private var active: Run? = null
     private var closed = false
+    val isClosed get()=closed
     suspend fun validateSkill(text: String): String = withContext(Dispatchers.Main.immediate) {
         withTimeout(15_000) { ready.await() }
         val result = CompletableDeferred<String>()
@@ -270,6 +271,7 @@ internal class PiAssistant(
         用户要求修改已有任务时先 list_plans 查真实ID，再 update_tasks，只改指定字段。只有多个候选才问。不要用创建工具代替更新。
         propose_draft 只用于实际记录、长期记忆、用户明确要求先看建议的计划，工具不会正式保存；不能声称已打卡或已保存。继续纠正草稿时重新给出完整替代草稿，不要重复追加旧草稿。
         金额用整数分，时长用整数分钟，不猜金额、时长或日期。数量可用 count/countUnit，原话七次保留7次，不能变七组；没有时长设minutes=0。
+        明确说完成但没计时/计数时，minutes=0,count=0，关联真实任务并completesPlan=true；不得为校验捏造时长或次数。
         拍照只是附件，不能据图猜数量或完成状态。如有list_plans可查当天任务，唯一明确候选可填planId，否则不擅自关联；completesPlan表示用户是否已完成任务。
         N天学习计划有明确范围/起止日即可生成每日任务；未给钟点/时长就留空/0，不要为可选字段反复追问。允许读取时查既有安排，不覆盖旧安排。ref为本批任务引用，parentId可用ref关联考试/目标。
         考试日期与复习安排分开，3号等缺月份年份必须先澄清。deadline为明确截止日期或日期时间，priority=0..3默认2，project为项目名。
@@ -277,6 +279,7 @@ internal class PiAssistant(
         当前系统通知${if(state.notificationsAllowed)"已开启" else "未开启，需要用户授权后才能提醒"}。未开启通知时说明任务已保存但通知待授权。
         无具体钟点的计划 time 为空；时长未定 expectedMinutes=0。日期不清先问一个短问题。
         查询和例子不生成记录。不进行支付、交易或诊断，不提供确定收益承诺。直接回复自然语言，无需 JSON。
+        保存任务成功后只用一句话概括结果与待处理的通知授权，详细任务由界面卡片显示，不逐条复述。记录整理好只给一句核对提示，避免重复卡片字段。
     """.trimIndent()
 
     fun close() {

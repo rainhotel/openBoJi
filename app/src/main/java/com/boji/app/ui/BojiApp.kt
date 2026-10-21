@@ -9,6 +9,7 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -26,6 +27,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalConfiguration
+import android.content.res.Configuration
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -67,6 +70,7 @@ fun BojiApp(state: AppState, actions: AppActions) {
         outline = Color(0xFF9A9A9A), outlineVariant = Line,
     )
     MaterialTheme(colorScheme = colors) {
+        val compact=LocalConfiguration.current.orientation==Configuration.ORIENTATION_LANDSCAPE
         var tab by rememberSaveable { mutableIntStateOf(0) }
         val pageStates=rememberSaveableStateHolder()
         var sheet by rememberSaveable { mutableStateOf<String?>(null) }
@@ -110,7 +114,7 @@ fun BojiApp(state: AppState, actions: AppActions) {
             containerColor = Color.White,
             snackbarHost = { SnackbarHost(snackbar) },
             topBar = {
-                Row(Modifier.fillMaxWidth().statusBarsPadding().height(64.dp).padding(horizontal = 22.dp),
+                Row(Modifier.fillMaxWidth().statusBarsPadding().height(if(compact)48.dp else 64.dp).padding(horizontal = 22.dp),
                     horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
                         Box(Modifier.size(30.dp).background(Ink, RoundedCornerShape(10.dp)), contentAlignment = Alignment.Center) {
@@ -127,11 +131,11 @@ fun BojiApp(state: AppState, actions: AppActions) {
             bottomBar = {
                 Column(Modifier.background(Color.White).navigationBarsPadding()) {
                     HorizontalDivider(color = Line)
-                    Row(Modifier.fillMaxWidth().height(72.dp)) {
+                    Row(Modifier.fillMaxWidth().height(if(compact)48.dp else 72.dp)) {
                         listOf("助手" to "chat", "日程" to "calendar", "积累" to "grid").forEachIndexed { index, item ->
                             Column(Modifier.weight(1f).fillMaxHeight().clickable { tab = index },
                                 verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                                Box(Modifier.size(width = 56.dp, height = 30.dp)
+                                Box(Modifier.size(width = 56.dp, height = if(compact)22.dp else 30.dp)
                                     .background(if (tab == index) Soft else Color.Transparent, RoundedCornerShape(16.dp)),
                                     contentAlignment = Alignment.Center) { Glyph(item.second, if (tab == index) Ink else Muted) }
                                 Text(item.first, color = if (tab == index) Ink else Muted, fontSize = 12.sp,
@@ -375,7 +379,7 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
     val keyboard=LocalSoftwareKeyboardController.current
     fun send() { if(!state.assistantBusy && !state.saving && (text.isNotBlank() || state.pendingImage!=null)) { submitted=text.trim();actions.sendMessage(text.trim());keyboard?.hide() } }
     LaunchedEffect(state.messages.lastOrNull()?.id) {
-        val last=state.messages.lastOrNull()
+        val last=state.messages.lastOrNull {it.user}
         if(last?.user==true && last.text.removeSuffix("\n[图片]")==submitted) {
             if(text.trim()==submitted)text=""
             submitted=null
@@ -404,7 +408,7 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
                     if (!state.settings.enabled) Text("本地可识别文字记录；规划需连接模型", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 16.dp))
                 }
             }
-            items(state.messages, key = { it.id }) { message ->
+            itemsIndexed(state.messages, key = { _,message -> message.id }) { index,message ->
                 Column {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = if (message.user) Arrangement.End else Arrangement.Start) {
                     Text(message.text, Modifier.widthIn(max = 308.dp).then(if (message.user) Modifier.background(Soft, RoundedCornerShape(22.dp)).padding(16.dp) else Modifier.padding(vertical = 4.dp)),
@@ -412,6 +416,12 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
                 }
                 state.taskReceipt?.takeIf {it.messageId==message.id && it.after.any {task ->state.plans.any {it.id==task.id}}}?.let {
                     TaskReceiptCard(it,state,actions,showTasks)
+                }
+                if(message.failed && index==state.messages.lastIndex) {
+                    val previous=state.messages.take(index).lastOrNull {it.user}
+                    if(previous!=null)TextButton(enabled=!state.assistantBusy && !state.saving,onClick={
+                        text=previous.text.removeSuffix("\n[图片]");send()
+                    },modifier=Modifier.testTag("assistant-retry")){Text("重试")}
                 }
                 }
             }
@@ -429,7 +439,9 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
                 Surface(shape = RoundedCornerShape(20.dp), color = Soft) {
                     Column(Modifier.fillMaxWidth().padding(18.dp)) {
                         Text("待确认", fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                        Text("${draft.records.size} 条记录 · ${draft.plans.size} 个计划 · ${draft.memories.size} 条记忆", color = Muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
+                        Text(listOfNotNull(if(draft.records.isNotEmpty())"${draft.records.size} 条记录" else null,
+                            if(draft.plans.isNotEmpty())"${draft.plans.size} 个任务" else null,if(draft.memories.isNotEmpty())"${draft.memories.size} 条记忆" else null).joinToString(" · "),
+                            color = Muted, fontSize = 13.sp, modifier = Modifier.padding(vertical = 8.dp))
                         draft.memories.take(3).forEach { Text(it.text,fontSize=14.sp,modifier=Modifier.padding(vertical=4.dp)) }
                         draft.records.take(3).forEach { Text("${it.title}  ${recordValue(it)}", fontSize = 14.sp, modifier = Modifier.padding(vertical = 4.dp)) }
                         draft.plans.take(3).forEach { Text("${it.date.takeLast(5)}  ${it.title}", fontSize = 14.sp, modifier = Modifier.padding(vertical = 4.dp)) }
@@ -472,7 +484,7 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
 @Composable private fun TaskReceiptCard(receipt:TaskReceipt,state:AppState,actions:AppActions,showTasks:(String)->Unit) {
     Surface(shape=RoundedCornerShape(20.dp),color=Soft,modifier=Modifier.padding(top=8.dp)) {
         Column(Modifier.fillMaxWidth().padding(18.dp)) {
-            Text("已保存到日程",fontWeight=FontWeight.Medium)
+            Text(if(receipt.createdIds.isEmpty())"已更新 ${receipt.after.size} 个任务" else if(receipt.before.isEmpty())"已创建 ${receipt.after.size} 个任务" else "已保存 ${receipt.after.size} 项安排",fontWeight=FontWeight.Medium)
             receipt.after.take(4).forEach {task ->Text("${task.date.takeLast(5)} ${task.time}  ${task.title}",fontSize=14.sp,modifier=Modifier.padding(top=8.dp))}
             if(receipt.after.size>4)Text("共 ${receipt.after.size} 个任务",fontSize=13.sp,color=Muted)
             if(receipt.after.any {it.reminderMinutes!=null} && !state.notificationsAllowed)
@@ -526,7 +538,8 @@ private fun AssistantPage(state: AppState, actions: AppActions, showDraft: () ->
 }
 internal fun recordValue(record: LifeRecord): String = if (record.domain == Domain.FINANCE) {
     (when(record.moneyKind) { MoneyKind.EXPENSE -> "−"; MoneyKind.INCOME, MoneyKind.REFUND -> "+"; MoneyKind.TRANSFER -> "↔" }) + "¥" + Amounts.yuan(record.amountFen)
-} else listOfNotNull(if(record.count>0) "${record.count} ${record.countUnit}" else null,if(record.minutes>0 || record.count==0) "${record.minutes} 分钟" else null).joinToString(" · ")
+} else listOfNotNull(if(record.count>0) "${record.count} ${record.countUnit}" else null,if(record.minutes>0) "${record.minutes} 分钟" else null)
+    .joinToString(" · ").ifBlank {if(record.planId!=null && record.completesPlan)"已完成" else "已记录"}
 @Composable internal fun GoalRow(goal: WeeklyGoal, records: List<LifeRecord>, date: LocalDate, onClick: () -> Unit) {
     val value = Progress.value(goal, records, date)
     val fill by animateFloatAsState((value.toFloat() / goal.target.coerceAtLeast(1)).coerceIn(0f, 1f), label = "目标进度")

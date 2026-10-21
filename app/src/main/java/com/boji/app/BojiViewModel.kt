@@ -42,7 +42,7 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
     private var connectionJob: Job? = null
     private var pi: PiAssistant? = null
     private val agentWorkspace = AgentWorkspace(application)
-    private fun agent(): PiAssistant = pi ?: PiAssistant(getApplication(),store,onStatus = { status ->
+    private fun agent(): PiAssistant = pi?.takeUnless {it.isClosed} ?: PiAssistant(getApplication(),store,onStatus = { status ->
         mutableState.update { it.copy(assistantStatus=status) }
     }).also { pi=it }
     private val mediaDir = File(application.filesDir, "attachments").apply { mkdirs() }
@@ -212,13 +212,14 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
         val input = text.trim().ifEmpty { if (current.pendingImage != null) "请整理这张图片" else "" }
         if (input.isBlank()) return
         if (input.length > 6000) { showError("一次输入请少于 6000 字"); return }
+        val userMessage=ChatMessage(user=true,text=input + if(current.pendingImage!=null)"\n[图片]" else "")
         mutableState.update { it.copy(assistantBusy=true,error=null) }
         assistantJob = viewModelScope.launch {
             try {
                 val imagePath = current.pendingImage
                 mutex.withLock {
                     val snapshot = withContext(Dispatchers.IO) {
-                        store.saveMessage(ChatMessage(user=true,text=input + if (imagePath != null) "\n[图片]" else ""))
+                        store.saveMessage(userMessage)
                         store.snapshot()
                     }
                     updateSnapshot(snapshot,null)
@@ -239,7 +240,7 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
                 }
                 mutex.withLock {
                     val snapshot = withContext(Dispatchers.IO) {
-                        val answer=ChatMessage(user=false,text=reply.text + if(imagePath!=null && !canInspect) "\n照片作为本地附件保留，未交给模型识图。" else "")
+                        val answer=ChatMessage(user=false,text=reply.text + if(imagePath!=null && !canInspect) "\n照片作为本地附件保留，未交给模型识图。" else "",failed=!reply.success)
                         store.saveMessage(answer)
                         if(latest.taskReceipt!=null && latest.taskReceipt.id!=current.taskReceipt?.id)store.attachTaskReceipt(answer.id)
                         if(batch!=null)store.savePendingDraft(batch)
@@ -249,8 +250,10 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
                 }
                 if (reply.success && batch?.records?.isNotEmpty() == true) mutableState.update { it.copy(pendingImage=null) }
             } catch (_: CancellationException) {
+                persistAssistantFailure("已停止。可以修改内容或重试。",userMessage)
                 mutableState.update { it.copy(notice="已停止，输入保留在对话中") }
             } catch (error: Exception) {
+                persistAssistantFailure("处理未完成，可以修改内容或重试。",userMessage)
                 showError(error.message ?: "处理失败，可以重试")
             } finally {
                 // A task tool may already have committed before cancellation or a later provider failure.
@@ -272,6 +275,16 @@ class BojiViewModel @JvmOverloads constructor(application: Application, private 
                 } }
             }
         }
+    }
+
+    private suspend fun persistAssistantFailure(text:String,userMessage:ChatMessage) {
+        withContext(NonCancellable) {mutex.withLock {
+            try {withContext(Dispatchers.IO) {
+                if(store.snapshot().messages.none {it.id==userMessage.id})store.saveMessage(userMessage)
+                store.saveMessage(ChatMessage(user=false,text=text,failed=true))
+            }}
+            catch(_:Exception) { /* The Activity may already be closing its storage. */ }
+        }}
     }
 
     override fun cancelAssistant() { assistantJob?.cancel() }

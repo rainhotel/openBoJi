@@ -78,10 +78,10 @@ internal object ModelJson {
         value.optString("messageId").takeIf {it.isNotBlank() && it!="null"})
 
     fun message(value: ChatMessage) = JSONObject().apply {
-        put("id", value.id); put("user", value.user); put("text", value.text)
+        put("id", value.id); put("user", value.user); put("text", value.text);put("failed",value.failed)
     }
 
-    fun message(value: JSONObject) = ChatMessage(value.string("id"), value.boolean("user"), value.string("text"))
+    fun message(value: JSONObject) = ChatMessage(value.string("id"), value.boolean("user"), value.string("text"),value.optBoolean("failed",false))
 
     fun draft(value: DraftBatch) = JSONObject().apply {
         put("id", value.id)

@@ -86,7 +86,7 @@ data class DraftBatch(
     val plans: List<Plan> = emptyList(),
     val memories: List<MemoryEntry> = emptyList(),
 )
-data class ChatMessage(val id: String = UUID.randomUUID().toString(), val user: Boolean, val text: String)
+data class ChatMessage(val id: String = UUID.randomUUID().toString(), val user: Boolean, val text: String,val failed:Boolean=false)
 data class InstalledSkill(val id: String, val name: String)
 data class MemoryEntry(val id: String = UUID.randomUUID().toString(), val text: String,
     val source: String = "用户确认", val updatedAt: String = LocalDateTime.now().toString())
@@ -184,7 +184,7 @@ object Progress {
                 runCatching { LocalDate.parse(it.date) }.getOrNull()?.let { d -> !d.isBefore(start) && d.isBefore(start.plusDays(7)) } == true
         }
         return if (goal.mode == GoalMode.MINUTES) rows.sumOf { it.minutes }
-        else rows.filter { (it.minutes > 0 || it.count > 0) && it.minutes >= goal.minimumMinutes }.map { it.date }.distinct().size
+        else rows.filter { (it.minutes > 0 || it.count > 0 || (it.completesPlan && it.planId!=null)) && it.minutes >= goal.minimumMinutes }.map { it.date }.distinct().size
     }
     fun netExpense(records: List<LifeRecord>): Long = records.filter { it.domain == Domain.FINANCE }.sumOf {
         when (it.moneyKind) { MoneyKind.EXPENSE -> it.amountFen; MoneyKind.REFUND -> -it.amountFen; else -> 0 }

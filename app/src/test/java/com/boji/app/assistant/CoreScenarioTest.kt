@@ -8,6 +8,14 @@ import org.junit.Test
 import java.time.LocalDate
 
 class CoreScenarioTest {
+    @Test fun explicitCompletionMayKeepDurationAndQuantityUnknown() {
+        val raw="""{"records":[{"domain":"TRAINING","title":"练胸结束","date":"2026-10-21","minutes":0,"amountFen":0,"planId":"chest","completesPlan":true}]}"""
+        val record=AssistantProtocol.parseDraft(raw).draft!!.records.single()
+        assertEquals(0,record.minutes);assertEquals(0,record.count);assertTrue(record.completesPlan)
+        val goal=WeeklyGoal(id="g",title="训练")
+        assertEquals(1,Progress.value(goal,listOf(record.copy(goalId="g")),LocalDate.of(2026,10,21)))
+        assertEquals(0,Progress.value(goal.copy(minimumMinutes=20),listOf(record.copy(goalId="g")),LocalDate.of(2026,10,21)))
+    }
     @Test fun originalSevenTimesIsNotConvertedIntoSetsOrMinutes() {
         val batch=LocalDraftParser.parse("今天练胸练了七次",LocalDate.of(2026,10,20))!!
         val row=batch.records.single()
